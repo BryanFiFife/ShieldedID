@@ -62,12 +62,6 @@ Shielded ID supports real zero-knowledge proofs via a native ZK agent using Bull
 - Fully browser-resident ZK proving
 - Biometric storage on servers
 
-## Non-goals
-- Identity recovery
-- Cross-service identity linking
-- Fully browser-resident ZK proving
-- Biometric storage on servers
-
 📦 **Installation & Dev**  
 ```bash
 pnpm install
