@@ -1,0 +1,38 @@
+{
+  "name": "@shielded-id/verifier-sdk",
+  "version": "1.0.0",
+  "description": "Shielded ID verifier SDK",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node ./scripts/build-cjs.js",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "prepare": "npm run build",
+    "example": "tsx examples/quickstart.ts",
+    "publish:npm": "npm publish --access public"
+  },
+  "dependencies": {
+    "@shielded-id/age-zk": "workspace:*",
+    "qrcode": "^1.5.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/qrcode": "^1.5.5",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.4.0",
+    "@vitest/coverage-v8": "^1.4.0"
+  }
+}

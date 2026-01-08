@@ -1,0 +1,37 @@
+{
+  "name": "shielded-wallet-pwa",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "guard:no-js-src": "node -e \"const fs = require('fs'); const path = require('path'); const hasJs = fs.readdirSync('src', {recursive: true}).some(f => f.endsWith('.js')); if(hasJs) { console.error('ERROR: Compiled .js files found in src. Delete them.'); process.exit(1); }\"",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.12",
+    "@mlc-ai/web-llm": "^0.2.53",
+    "@shielded-id/age-zk": "workspace:*",
+    "argon2": "^0.44.0",
+    "qrcode-reader": "^1.0.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sql.js": "^1.10.3",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^14.2.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^18.2.79",
+    "@types/react-dom": "^18.2.25",
+    "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/coverage-v8": "^1.4.0",
+    "jsdom": "^24.0.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.0",
+    "vitest": "^1.4.0"
+  }
+}

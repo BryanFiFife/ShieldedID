@@ -1,0 +1,41 @@
+version: "3.9"
+services:
+  registry:
+    build:
+      context: .
+      dockerfile: apps/registry-server/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: /app/data/registry.db
+      PORT: 3000
+    volumes:
+      - registry-data:/app/data
+
+  wallet-pwa:
+    build:
+      context: .
+      dockerfile: apps/wallet-pwa/Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_REGISTRY_URL: http://registry:3000
+
+  verifier-demo:
+    build:
+      context: .
+      dockerfile: apps/verifier-demo/Dockerfile
+    ports:
+      - "5174:5174"
+      - "5050:5050"
+    environment:
+      VITE_VERIFIER_ORIGIN: http://localhost:5174
+      VITE_REGISTRY_URL: http://registry:3000
+      VITE_BACKEND_URL: http://localhost:5050
+      VERIFIER_ORIGIN: http://localhost:5174
+      REGISTRY_URL: http://registry:3000
+    depends_on:
+      - registry
+
+volumes:
+  registry-data:

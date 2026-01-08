@@ -1,0 +1,101 @@
+:root {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  color: #111;
+  background: radial-gradient(circle at top, #faf8f4, #f2efe8 60%, #eae3d6 100%);
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 2rem;
+  border-bottom: 1px solid #e5dccd;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+}
+
+main {
+  padding: 2rem;
+  display: grid;
+  gap: 1.5rem;
+}
+
+section {
+  background: #fff;
+  border-radius: 20px;
+  padding: 1.5rem;
+  border: 1px solid #e7dfd2;
+  box-shadow: 0 20px 40px rgba(56, 42, 14, 0.08);
+}
+
+.hero {
+  display: grid;
+  gap: 1rem;
+}
+
+.badge {
+  display: inline-flex;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  background: #f0e7d8;
+  font-size: 0.85rem;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+button {
+  background: #111;
+  color: #fff;
+  border: none;
+  padding: 0.75rem 1rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #f4eee1;
+  color: #111;
+  border: 1px solid #d8ccb8;
+}
+
+input, textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid #d8ccb8;
+  font-family: inherit;
+}
+
+footer {
+  padding: 2rem;
+  text-align: center;
+  color: #7b6f5a;
+}
+
+@media (max-width: 720px) {
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+}

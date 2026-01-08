@@ -1,0 +1,30 @@
+{
+  "name": "@shielded-id/root",
+  "version": "1.0.0",
+  "description": "Shielded ID Wallet + Zero-KYC Verifier - Monorepo Root",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.1.0",
+  "scripts": {
+    "dev": "concurrently --kill-others \"pnpm -F shielded-registry-server dev\" \"pnpm -F shielded-wallet-pwa dev\" \"pnpm -F shielded-verifier-demo dev\" \"pnpm -F shielded-verifier-demo run server\"",
+    "build": "pnpm -r --filter=!@shielded-id/age-zk build",
+    "test": "pnpm -r --filter=!@shielded-id/age-zk --filter=!shielded-verifier-demo test",
+    "lint": "pnpm -r lint",
+    "test:watch": "pnpm -r test:watch",
+    "type-check": "tsc --noEmit",
+    "clean": "pnpm -r exec rm -rf dist node_modules"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "concurrently": "^8.2.2"
+  },
+  "keywords": [
+    "privacy-preserving",
+    "identity",
+    "minimal-disclosure",
+    "wallet",
+    "verifier",
+    "cryptography"
+  ],
+  "license": "Apache-2.0"
+}

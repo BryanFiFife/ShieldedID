@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  registry:
+    build:
+      context: ../..
+      dockerfile: apps/registry-server/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=/app/data/registry.db
+      - PORT=3000
+    volumes:
+      - registry-data:/app/data
+volumes:
+  registry-data:

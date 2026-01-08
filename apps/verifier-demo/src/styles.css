@@ -1,0 +1,87 @@
+:root {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  color: #1a1a1a;
+  background: radial-gradient(circle at top, #f7f0e6, #f5f3ef 50%, #ece9e4 100%);
+}
+
+body {
+  margin: 0;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #d5d0c7;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+}
+
+main {
+  padding: 1.5rem;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.panel {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 1.25rem;
+  border: 1px solid #e3ddd3;
+  box-shadow: 0 12px 30px rgba(66, 53, 20, 0.1);
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+button {
+  background: #111;
+  color: #fff;
+  border: none;
+  padding: 0.75rem 1rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #f5f1e8;
+  color: #111;
+  border: 1px solid #cfc6b6;
+}
+
+.qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.qr img {
+  width: 240px;
+  height: 240px;
+}
+
+.badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: #efe7da;
+  color: #5d4b23;
+}
+
+@media (max-width: 720px) {
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+}
