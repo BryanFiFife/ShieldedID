@@ -1,6 +1,6 @@
 # Shielded ID
 
-**Version 1.4.0** | **Status: Production-Ready** | **Last Updated: January 12, 2026** | **279 Tests Passing** | **14/14 Validation Checks**
+**Version 1.3.0** | **Status: Production-Ready** | **Last Updated: January 12, 2026** | **279 Tests Passing** | **14/14 Validation Checks**
 
 🎯 **Global Standards Achieved**: [RFC Protocol Spec](docs/spec/protocol-rfc.md) | [OAuth 2.0 Profile](docs/spec/oauth2-profile.md) | [OWASP Top 10](COMPLIANCE.md) | [ISO 27001 Roadmap](COMPLIANCE.md)
 
@@ -122,11 +122,31 @@ ZK_E2E=1 pnpm -F verifier-sdk test
 - All packages (Node + Rust) declare Apache-2.0  
 - NOTICE included
 
+## 📋 Supported Claim Types
+
+| Claim Type | ZK Proof | Proof Method | Purpose |
+|-----------|----------|--------------|---------|
+| **AGE_OVER** | ✅ Yes | Bulletproofs range proof | Age threshold verification (e.g., ≥18, ≥21) |
+| **KYC_LEVEL** | ✅ Yes | Bulletproofs range proof | KYC assurance level verification (e.g., level ≥2) |
+| **CONTINUITY** | ⚠️ Pairwise ID | Signature-based binding | Wallet continuity & sybil resistance per-verifier |
+| **CUSTOM** | ⏳ Roadmap | Framework support | Future extensibility for custom predicates |
+
+**ZK Implementation Details:**
+- **AGE_OVER**: Proves `age >= threshold` without revealing actual age/DOB (uses `prove_ge` from age-zk Rust agent)
+- **KYC_LEVEL**: Proves `kycLevel >= minLevel` without revealing actual level (same Bulletproofs engine as AGE_OVER)
+- **CONTINUITY**: Generates per-verifier pairwise subject IDs; cryptographically bound but not a ZK proof
+- All proofs bind to verifier origin + nonce + expiry to prevent replay attacks
+
+**Future Roadmap:**
+- Equality predicates (e.g., "country == US")
+- Composite claims (e.g., "age >= 18 AND kyc >= 2")
+- Additional circuit optimizations
+
 ⚠️ **Known Limitations**  
 - ZK E2E is gated (`ZK_E2E=1`) to avoid heavy WASM startup in routine CI.  
 - Browser environments must support WebCrypto + WASM; older or locked-down browsers may fail to load the agent.  
 - Registry is stubbed in tests; production must deploy the real registry with HTTPS and revocation data.  
-- Only AGE_OVER claims are proven via ZK today; additional claim circuits are roadmap items.  
+- Bulletproofs engine supports range proofs only; other predicates are roadmap items.  
 - Availability/DoS protection depends on infrastructure controls (rate limits, WAF, etc.).
 
 ---
