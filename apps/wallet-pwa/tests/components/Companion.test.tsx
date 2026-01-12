@@ -42,4 +42,34 @@ describe("Companion", () => {
     render(<Companion />);
     expect(screen.getByText("Unlock the vault to use your local companion.")).toBeInTheDocument();
   });
+
+  it("renders companion container", () => {
+    const { container } = render(<Companion />);
+    // Check that the panel class exists
+    const panel = container.querySelector(".panel");
+    expect(panel).toBeInTheDocument();
+  });
+
+  it("displays companion heading", () => {
+    const { container } = render(<Companion />);
+    const heading = container.querySelector("h2");
+    expect(heading?.textContent).toBe("Companion");
+  });
+
+  it("renders with correct structure", () => {
+    const { container } = render(<Companion />);
+    const panels = container.querySelectorAll(".panel");
+    expect(panels.length).toBeGreaterThan(0);
+  });
+
+  it("displays information text", () => {
+    const { container } = render(<Companion />);
+    const paragraphs = container.querySelectorAll("p");
+    expect(paragraphs.length).toBeGreaterThan(0);
+  });
+
+  it("initializes without errors when vault is locked", () => {
+    // Should render without throwing
+    expect(() => render(<Companion />)).not.toThrow();
+  });
 });

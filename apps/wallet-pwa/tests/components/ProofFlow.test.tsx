@@ -38,4 +38,41 @@ describe("ProofFlow", () => {
     render(<ProofFlow />);
     expect(screen.getByText("Scan Verifier QR")).toBeInTheDocument();
   });
+
+  it("renders video element for QR scanning", () => {
+    const { container } = render(<ProofFlow />);
+    const video = container.querySelector("video#qr-cam");
+    expect(video).toBeInTheDocument();
+  });
+
+  it("renders stack container", () => {
+    const { container } = render(<ProofFlow />);
+    const stack = container.querySelector(".stack");
+    expect(stack).toBeInTheDocument();
+  });
+
+  it("renders panel with heading", () => {
+    const { container } = render(<ProofFlow />);
+    const heading = container.querySelector("h2");
+    expect(heading?.textContent).toBe("Scan Verifier QR");
+  });
+
+  it("initializes with scan step", () => {
+    const { container } = render(<ProofFlow />);
+    // Check for video element which is shown in scan step
+    const video = container.querySelector("video");
+    expect(video).toBeInTheDocument();
+    expect(video?.id).toBe("qr-cam");
+  });
+
+  it("video element has correct attributes", () => {
+    const { container } = render(<ProofFlow />);
+    const video = container.querySelector("video#qr-cam") as HTMLVideoElement | null;
+    expect(video?.autoplay).toBe(true);
+    expect(video?.getAttribute("playsinline")).toBe("");
+  });
+
+  it("mounts without errors", () => {
+    expect(() => render(<ProofFlow />)).not.toThrow();
+  });
 });

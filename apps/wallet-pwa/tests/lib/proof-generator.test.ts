@@ -197,4 +197,77 @@ describe("proof generator", () => {
     expect(response.zkProofs[0]).toBeDefined();
     expect(response.zkProofs[0].claimType).toBe("KYC_LEVEL");
   });
+
+  it("handles multiple requested claims", async () => {
+    vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(false);
+
+    const passphrase = "strong-passphrase";
+    const signingKey = await createSigningKey(passphrase);
+
+    const vault = {
+      ...createEmptyVault(),
+      masterSecret: b64(crypto.getRandomValues(new Uint8Array(32))),
+      signingKeyEncrypted: b64(signingKey.encryptedPrivateKey),
+      webauthnCredentialId: undefined,
+      kycLevel: 2,
+      profile: {
+        givenName: "BOB",
+        familyName: "SMITH",
+        dateOfBirth: "1985-06-20",
+        documentType: "ID",
+        issuer: "USA",
+        issuedDate: "2020-01-01",
+        expiryDate: "2030-01-01"
+      }
+    };
+
+    const request = {
+      requestId: "req-2",
+      nonce: "nonce-2",
+      verifierOrigin: "https://store.example",
+      requestedClaims: [
+        { type: "AGE_OVER" },
+        { type: "KYC_LEVEL", minLevel: 1 },
+        { type: "CONTINUITY" }
+      ]
+    };
+
+    const response = await generateProof(request, vault, { walletId: "wallet-2", passphrase });
+    expect(response.signature).toBeTruthy();
+    expect(response.claims).toBeInstanceOf(Array);
+  });
+
+  it("validates request with no claims", async () => {
+    vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(false);
+
+    const passphrase = "strong-passphrase";
+    const signingKey = await createSigningKey(passphrase);
+
+    const vault = {
+      ...createEmptyVault(),
+      masterSecret: b64(crypto.getRandomValues(new Uint8Array(32))),
+      signingKeyEncrypted: b64(signingKey.encryptedPrivateKey),
+      webauthnCredentialId: undefined,
+      profile: {
+        givenName: "CHARLIE",
+        familyName: "BROWN",
+        dateOfBirth: "1995-03-10",
+        documentType: "ID",
+        issuer: "USA",
+        issuedDate: "2020-01-01",
+        expiryDate: "2030-01-01"
+      }
+    };
+
+    const request = {
+      requestId: "req-3",
+      nonce: "nonce-3",
+      verifierOrigin: "https://vendor.example",
+      requestedClaims: [] // No claims
+    };
+
+    const response = await generateProof(request, vault, { walletId: "wallet-3", passphrase });
+    expect(response.signature).toBeTruthy();
+    expect(response.claims).toBeInstanceOf(Array);
+  });
 });
