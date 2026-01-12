@@ -71,7 +71,9 @@ let registryUrl = "";
 let app: Awaited<ReturnType<typeof buildApp>> | null = null;
 
 beforeAll(async () => {
-  globalThis.crypto = webcrypto as unknown as Crypto;
+  if (!globalThis.crypto) {
+    globalThis.crypto = webcrypto as unknown as Crypto;
+  }
   (globalThis as { window?: unknown }).window = globalThis;
   (globalThis as { self?: unknown }).self = globalThis;
   if (!globalThis.btoa) {

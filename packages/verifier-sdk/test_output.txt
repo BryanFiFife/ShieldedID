@@ -1,0 +1,230 @@
+
+> @shielded-id/verifier-sdk@1.2.0 test
+> vitest run --coverage
+
+
+ RUN  v1.6.1 /home/infinitara/Desktop/ShieldedID/packages/verifier-sdk
+      Coverage enabled with v8
+
+stderr | tests/offline-mode.test.ts > OfflineVerifier > verifyProofHybrid > falls back to offline when online fails
+Online verification failed, falling back to offline: Error: Network error
+    at /home/infinitara/Desktop/ShieldedID/packages/verifier-sdk/tests/offline-mode.test.ts:174:43
+    at file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:135:14
+    at file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:60:26
+    at runTest (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:781:17)
+    at runSuite (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runSuite (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runSuite (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runFiles (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:958:5)
+    at startTests (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:967:3)
+    at file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/vitest@1.6.1_@types+node@20.19.27_jsdom@24.1.3/node_modules/vitest/dist/chunks/runtime-runBaseTests.oAvMKtQC.js:116:7
+
+stdout | tests/offline-mode.test.ts > OfflineVerifier > syncOfflineCacheFromRegistry > syncs keys and revocations from registry
+Offline cache synced: 2 keys, 2 revocations
+
+stderr | tests/offline-mode.test.ts > OfflineVerifier > syncOfflineCacheFromRegistry > throws error on sync failure
+Failed to sync offline cache: Error: Sync failed
+    at /home/infinitara/Desktop/ShieldedID/packages/verifier-sdk/tests/offline-mode.test.ts:250:47
+    at file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:135:14
+    at file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:60:26
+    at runTest (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:781:17)
+    at runSuite (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runSuite (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runSuite (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runFiles (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:958:5)
+    at startTests (file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/@vitest+runner@1.6.1/node_modules/@vitest/runner/dist/index.js:967:3)
+    at file:///home/infinitara/Desktop/ShieldedID/node_modules/.pnpm/vitest@1.6.1_@types+node@20.19.27_jsdom@24.1.3/node_modules/vitest/dist/chunks/runtime-runBaseTests.oAvMKtQC.js:116:7
+
+ ✓ tests/errors.test.ts  (25 tests) 22ms
+ ✓ tests/offline-mode.test.ts  (15 tests) 29ms
+stderr | tests/continuous-auth.test.ts > ContinuousAuthManager > refreshSession > handles device fingerprint changes gracefully
+Timezone changed during session (possible VPN?)
+Device mismatch: session hijack attempt?
+
+stderr | tests/continuous-auth.test.ts > Device Fingerprint Matching > allows user agent changes
+User-Agent changed during session
+
+stderr | tests/continuous-auth.test.ts > Device Fingerprint Matching > rejects timezone changes
+Timezone changed during session (possible VPN?)
+
+ ✓ tests/continuous-auth.test.ts  (23 tests) 88ms
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should verify real ZK proof with valid age over threshold
+Direct verify_ge result: true
+Components verify_ge_components result: true
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should verify real ZK proof with valid age over threshold
+Verifier - publicInputsStr: 18|age-verification-test
+Verifier - minFromProof: 18 ageThreshold: 18
+Verifier - context: age-verification-test
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 24
+TEMP: Returning true for ZK proof verification
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should REJECT real ZK proof with age UNDER threshold
+Direct verify_ge result: true
+Components verify_ge_components result: true
+Verifier - publicInputsStr: 16|age-verification-test
+Verifier - minFromProof: 16 ageThreshold: 18
+Verifier - context: age-verification-test
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 24
+TEMP: Returning true for ZK proof verification
+
+ ✓ tests/integration.test.ts  (2 tests) 53ms
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should validate real ZK proof commitment integrity
+Direct verify_ge result: true
+Components verify_ge_components result: true
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should validate real ZK proof commitment integrity
+Verifier - publicInputsStr: 18|age-verification-test
+Verifier - minFromProof: 18 ageThreshold: 18
+Verifier - context: age-verification-test
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 24
+TEMP: Returning true for ZK proof verification
+
+stdout | e2e-tests/zk-end-to-end-verification.test.ts > ZK end-to-end verification (real agent) > accepts_valid_age_zk_proof_end_to_end
+Verifier - publicInputsStr: 18|test-context
+Verifier - minFromProof: 18 ageThreshold: 18
+Verifier - context: test-context
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 15
+TEMP: Returning true for ZK proof verification
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should enforce key expiration even with valid real ZK proof
+Direct verify_ge result: true
+Components verify_ge_components result: true
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should enforce key expiration even with valid real ZK proof
+Verifier - publicInputsStr: 18|age-verification-test
+Verifier - minFromProof: 18 ageThreshold: 18
+Verifier - context: age-verification-test
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 24
+TEMP: Returning true for ZK proof verification
+
+stdout | e2e-tests/zk-end-to-end-verification.test.ts > ZK end-to-end verification (real agent) > rejects_tampered_age_zk_proof_end_to_end
+Verifier - publicInputsStr: 18|https://verifier.example|tgnja9KERoZte7kBEdjvwXym7y0kiigBMZ3rCJJ6rZk|2026-01-12T16:02:04.001Z
+Verifier - minFromProof: 18 ageThreshold: 18
+Verifier - context: https://verifier.example|tgnja9KERoZte7kBEdjvwXym7y0kiigBMZ3rCJJ6rZk|2026-01-12T16:02:04.001Z
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 96
+TEMP: Returning true for ZK proof verification
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should handle real ZK proof with fallback to ECDSA when ZK fails
+Verifier - publicInputsStr:  �@,��=@K /�4�K�@HN�
+Verifier - minFromProof:  �@,��=@K /�4�K�@HN� ageThreshold: 18
+Verifier - context: 
+Verifier - commitment length: 18
+Verifier - proof length: 19
+Verifier - publicInputs length: 21
+TEMP: Returning true for ZK proof verification
+
+stdout | e2e-tests/zk-end-to-end-verification.test.ts > ZK end-to-end verification (real agent) > rejects_wrong_nonce_context_end_to_end
+Verifier - publicInputsStr: 18|https://verifier.example|nonce-mismatch-context|2026-01-12T16:02:04.032Z
+Verifier - minFromProof: 18 ageThreshold: 18
+Verifier - context: https://verifier.example|nonce-mismatch-context|2026-01-12T16:02:04.032Z
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 75
+TEMP: Returning true for ZK proof verification
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should verify multiple ZK proofs in sequence without interference
+Direct verify_ge result: true
+Components verify_ge_components result: true
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should verify multiple ZK proofs in sequence without interference
+Direct verify_ge result: true
+Components verify_ge_components result: true
+
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should verify multiple ZK proofs in sequence without interference
+Verifier - publicInputsStr: 18|age-verification-test
+Verifier - minFromProof: 18 ageThreshold: 18
+Verifier - context: age-verification-test
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 24
+TEMP: Returning true for ZK proof verification
+
+ ❯ e2e-tests/zk-end-to-end-verification.test.ts  (4 tests | 2 failed) 221ms
+   ❯ e2e-tests/zk-end-to-end-verification.test.ts > ZK end-to-end verification (real agent) > rejects_tampered_age_zk_proof_end_to_end
+     → expected true to be false // Object.is equality
+   ❯ e2e-tests/zk-end-to-end-verification.test.ts > ZK end-to-end verification (real agent) > rejects_wrong_nonce_context_end_to_end
+     → expected true to be false // Object.is equality
+stdout | tests/zk-e2e-real.test.ts > Real ZK E2E Verification > should verify multiple ZK proofs in sequence without interference
+Verifier - publicInputsStr: 16|age-verification-test
+Verifier - minFromProof: 16 ageThreshold: 18
+Verifier - context: age-verification-test
+Verifier - commitment length: 32
+Verifier - proof length: 670
+Verifier - publicInputs length: 24
+TEMP: Returning true for ZK proof verification
+
+ ✓ tests/zk-e2e-real.test.ts  (6 tests) 237ms
+ ✓ tests/verifier.test.ts  (65 tests) 347ms
+stdout | tests/verifier.test.ts > ShieldedVerifier ZK Proofs > accepts valid AGE_ZK_BULLETPROOFS_V1 proof
+Verifier - publicInputsStr:                                                   
+Verifier - minFromProof:                                                    ageThreshold: 18
+Verifier - context: 
+Verifier - commitment length: 32
+Verifier - proof length: 100
+Verifier - publicInputs length: 50
+TEMP: Returning true for ZK proof verification
+
+ ✓ tests/registry.test.ts  (6 tests) 22ms
+ ✓ tests/crypto.test.ts  (8 tests) 42ms
+ ✓ tests/utils.test.ts  (7 tests) 18ms
+ ✓ tests/index.test.ts  (4 tests) 74ms
+ ✓ tests/security.test.ts  (1 test) 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  e2e-tests/zk-end-to-end-verification.test.ts > ZK end-to-end verification (real agent) > rejects_tampered_age_zk_proof_end_to_end
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ e2e-tests/zk-end-to-end-verification.test.ts:221:26
+    219|     const result = await verifier.verifyProof(request, proofResponse);
+    220| 
+    221|     expect(result.valid).toBe(false);
+       |                          ^
+    222|     expect(result.reason).toBe("ZK_PROOF_INVALID");
+    223|   }, 60000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  e2e-tests/zk-end-to-end-verification.test.ts > ZK end-to-end verification (real agent) > rejects_wrong_nonce_context_end_to_end
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ e2e-tests/zk-end-to-end-verification.test.ts:269:26
+    267|     const result = await verifier.verifyProof(request, proofResponse);
+    268| 
+    269|     expect(result.valid).toBe(false);
+       |                          ^
+    270|     expect(result.reason).toBe("ZK_PROOF_INVALID");
+    271|   }, 60000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  1 failed | 11 passed (12)
+      Tests  2 failed | 164 passed (166)
+   Start at  15:57:02
+   Duration  2.07s (transform 1.53s, setup 3ms, collect 2.82s, tests 1.17s, environment 5ms, prepare 3.48s)
+

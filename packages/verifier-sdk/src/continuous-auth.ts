@@ -192,6 +192,11 @@ export class ContinuousAuthManager {
       return null;
     }
 
+    // Check if invalidated
+    if (session.status === "invalidated") {
+      return null;
+    }
+
     return session;
   }
 

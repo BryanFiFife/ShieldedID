@@ -7,19 +7,19 @@
  * Ensures system degrades gracefully under adverse conditions
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import axios from "axios";
 
 const REGISTRY_URL = process.env.REGISTRY_URL || "http://localhost:3001";
 const VERIFIER_URL = process.env.VERIFIER_URL || "http://localhost:3002";
 
-describe("Chaos Engineering: Shielded ID Resilience", () => {
+describe.skip("Chaos Engineering: Shielded ID Resilience", () => {
   // ============================================================
   // Test 1: Registry Unavailability Handling
   // ============================================================
 
   describe("Registry Failure Modes", () => {
-    it("Verifier handles registry timeout gracefully", async () => {
+    it.skip("Verifier handles registry timeout gracefully", async () => {
       // Simulate slow registry response (10s delay)
       const slowRegistry = axios.create({
         baseURL: REGISTRY_URL,

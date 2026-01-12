@@ -131,4 +131,118 @@ describe("RegistryClient", () => {
     
     globalThis.fetch = originalFetch;
   });
+
+  describe("circuit breaker", () => {
+    it("opens circuit after threshold failures", async () => {
+      let callCount = 0;
+      globalThis.fetch = (async () => {
+        callCount++;
+        return { ok: false, status: 500 } as Response;
+      }) as typeof fetch;
+
+      const client = new RegistryClient({ registryUrl: "https://registry.example" });
+      
+      // Make multiple failing calls to trigger circuit breaker
+      for (let i = 0; i < 6; i++) {
+        try {
+          await client.getWalletStatus("wallet-fail");
+        } catch (e) {
+          // Expected to fail
+        }
+      }
+      
+      // Circuit should be open now
+      await expect(client.getWalletStatus("wallet-fail")).rejects.toThrow("REGISTRY_CIRCUIT_OPEN");
+    });
+
+    it("resets circuit breaker after reset timeout", async () => {
+      let callCount = 0;
+      globalThis.fetch = (async () => {
+        callCount++;
+        return { ok: false, status: 500 } as Response;
+      }) as typeof fetch;
+
+      const client = new RegistryClient({ registryUrl: "https://registry.example" });
+      
+      // Trigger circuit breaker
+      for (let i = 0; i < 6; i++) {
+        try {
+          await client.getWalletStatus("wallet-fail");
+        } catch (e) {
+          // Expected to fail
+        }
+      }
+      
+      // Mock time passing to reset circuit breaker
+      const originalNow = Date.now;
+      Date.now = vi.fn().mockReturnValue(Date.now() + 60001); // 60 seconds later
+      
+      // Next call should succeed (circuit reset)
+      globalThis.fetch = (async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ walletId: "wallet-1", keys: [] })
+        } as Response;
+      }) as typeof fetch;
+      
+      const result = await client.getWalletStatus("wallet-ok");
+      expect(result?.walletId).toBe("wallet-1");
+      
+      Date.now = originalNow;
+    });
+
+    it("falls back to stale cache when circuit breaker is open", async () => {
+      // First, cache some data
+      globalThis.fetch = (async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ walletId: "cached-wallet", keys: [] })
+        } as Response;
+      }) as typeof fetch;
+
+      const client = new RegistryClient({ registryUrl: "https://registry.example" });
+      const cachedResult = await client.getWalletStatus("cached-wallet");
+      expect(cachedResult?.walletId).toBe("cached-wallet");
+
+      // Now trigger circuit breaker
+      globalThis.fetch = (async () => {
+        return { ok: false, status: 500 } as Response;
+      }) as typeof fetch;
+
+      // Make multiple failing calls to trigger circuit breaker
+      for (let i = 0; i < 6; i++) {
+        try {
+          await client.getWalletStatus("other-wallet");
+        } catch (e) {
+          // Expected to fail
+        }
+      }
+
+      // Circuit should be open, but should return stale cached data
+      const staleResult = await client.getWalletStatus("cached-wallet");
+      expect(staleResult?.walletId).toBe("cached-wallet");
+    });
+
+    it("throws when circuit breaker is open and no stale cache", async () => {
+      globalThis.fetch = (async () => {
+        return { ok: false, status: 500 } as Response;
+      }) as typeof fetch;
+
+      const client = new RegistryClient({ registryUrl: "https://registry.example" });
+      
+      // Make multiple failing calls to trigger circuit breaker
+      for (let i = 0; i < 6; i++) {
+        try {
+          await client.getWalletStatus("wallet-fail");
+        } catch (e) {
+          // Expected to fail
+        }
+      }
+      
+      // Circuit should be open and no cache available
+      await expect(client.getWalletStatus("uncached-wallet")).rejects.toThrow("REGISTRY_CIRCUIT_OPEN");
+    });
+  });
 });

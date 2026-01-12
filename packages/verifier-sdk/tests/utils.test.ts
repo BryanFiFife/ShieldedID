@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { base64UrlEncode, base64UrlDecode, toUint8, nowIso, addSeconds, ensureFetch } from "../src/utils.js";
+import { base64UrlEncode, base64UrlDecode, toUint8, nowIso, addSeconds, ensureFetch, stableStringify } from "../src/utils.js";
 
 describe("utils", () => {
   it("encodes and decodes base64url", () => {
@@ -51,5 +51,46 @@ describe("utils", () => {
     expect(decoded).toEqual(data);
     
     (globalThis as any).Buffer = originalBuffer;
+  });
+
+  describe("stableStringify", () => {
+    it("stringifies null and undefined", () => {
+      expect(stableStringify(null)).toBe("null");
+      expect(stableStringify(undefined)).toBe("null");
+    });
+
+    it("stringifies arrays", () => {
+      expect(stableStringify([1, 2, 3])).toBe("[1,2,3]");
+      expect(stableStringify(["a", "b"])).toBe('["a","b"]');
+    });
+
+    it("stringifies numbers and booleans", () => {
+      expect(stableStringify(42)).toBe("42");
+      expect(stableStringify(3.14)).toBe("3.14");
+      expect(stableStringify(true)).toBe("true");
+      expect(stableStringify(false)).toBe("false");
+    });
+
+    it("stringifies nested objects", () => {
+      const obj = { b: { z: 1, a: 2 }, a: [1, 2] };
+      expect(stableStringify(obj)).toBe('{"a":[1,2],"b":{"a":2,"z":1}}');
+    });
+
+    it("stringifies strings", () => {
+      expect(stableStringify("hello")).toBe('"hello"');
+      expect(stableStringify("with\"quotes")).toBe('"with\\"quotes"');
+    });
+
+    it("stringifies numbers and booleans", () => {
+      expect(stableStringify(42)).toBe("42");
+      expect(stableStringify(3.14)).toBe("3.14");
+      expect(stableStringify(true)).toBe("true");
+      expect(stableStringify(false)).toBe("false");
+    });
+
+    it("filters out undefined values in objects", () => {
+      const obj = { a: 1, b: undefined, c: 2 };
+      expect(stableStringify(obj)).toBe('{"a":1,"c":2}');
+    });
   });
 });

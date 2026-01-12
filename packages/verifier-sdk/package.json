@@ -1,6 +1,6 @@
 {
   "name": "@shielded-id/verifier-sdk",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "description": "Shielded ID verifier SDK",
   "license": "Apache-2.0",
   "type": "module",

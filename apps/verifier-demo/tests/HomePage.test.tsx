@@ -6,6 +6,6 @@ describe("HomePage", () => {
   it("renders request options", () => {
     render(<HomePage onSelect={() => undefined} />);
     expect(screen.getByText("Verify Age (Over 18)")).toBeInTheDocument();
-    expect(screen.getByText("KYC Level 2")).toBeInTheDocument();
+    expect(screen.getByText("Assurance Tier 2")).toBeInTheDocument();
   });
 });

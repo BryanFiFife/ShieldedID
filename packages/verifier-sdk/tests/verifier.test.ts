@@ -4,10 +4,16 @@ import { verifyECDSAP256 } from "../src/crypto.js";
 
 // Mock the age-zk module to avoid WASM loading in tests
 vi.mock('@shielded-id/age-zk', () => ({
-  prove_ge: vi.fn().mockResolvedValue({
-    commitment: new Uint8Array(32),
-    proof: new Uint8Array(100),
-    public_inputs: new Uint8Array(50)
+  prove_ge: vi.fn().mockImplementation(async (age: bigint, threshold: bigint, context: string) => {
+    // Create proper public inputs with format "threshold|age|context"
+    const publicInputsStr = `${threshold}|${age}|${context}`;
+    const publicInputs = new TextEncoder().encode(publicInputsStr);
+    
+    return {
+      commitment: new Uint8Array(32).fill(1), // Mock commitment
+      proof: new Uint8Array(670).fill(2), // Mock proof
+      public_inputs: publicInputs
+    };
   }),
   proveGE: vi.fn().mockResolvedValue({
     commitment: 'mock-commitment',
@@ -337,6 +343,58 @@ describe("Minimal Disclosure Regression Guards", () => {
       const result = await verifier.verifyProof(request, validProof);
       expect(result.reason).not.toBe("INVALID_CLAIM_VALUE");
       expect(result.reason).not.toBe("PII_DETECTED");
+    });
+
+    it("accepts boolean true CONTINUITY claims", async () => {
+      const request = verifier.createProofRequest({
+        requestedClaims: [{ type: "CONTINUITY" }],
+        policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+        callback: { method: "POST", url: "https://shop.example/callback" }
+      });
+
+      // Mock valid proof with boolean true value
+      const validProof = {
+        requestId: request.requestId,
+        nonce: request.nonce,
+        walletId: "test-wallet",
+        keyId: "test-key",
+        pairwiseSubjectId: "test-subject",
+        claims: [
+          { type: "CONTINUITY", value: true } // ✅ Boolean true - allowed
+        ],
+        suite: "ECDSA_P256_SHA256_1.0.0",
+        signature: "mock-signature"
+      };
+
+      const result = await verifier.verifyProof(request, validProof);
+      expect(result.reason).not.toBe("INVALID_CLAIM_VALUE");
+      expect(result.reason).not.toBe("PII_DETECTED");
+    });
+
+    it("rejects non-string CONTINUITY claims", async () => {
+      const request = verifier.createProofRequest({
+        requestedClaims: [{ type: "CONTINUITY" }],
+        policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+        callback: { method: "POST", url: "https://shop.example/callback" }
+      });
+
+      // Mock invalid proof with number value
+      const invalidProof = {
+        requestId: request.requestId,
+        nonce: request.nonce,
+        walletId: "test-wallet",
+        keyId: "test-key",
+        pairwiseSubjectId: "test-subject",
+        claims: [
+          { type: "CONTINUITY", value: 123 } // ❌ Number - not allowed
+        ],
+        suite: "ECDSA_P256_SHA256_1.0.0",
+        signature: "mock-signature"
+      };
+
+      const result = await verifier.verifyProof(request, invalidProof);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe("INVALID_CLAIM_VALUE");
     });
   });
 });
@@ -1341,7 +1399,7 @@ describe("ShieldedVerifier Methods", () => {
       walletId: "test-wallet",
       keyId: "test-key",
       pairwiseSubjectId: "test-subject",
-      claims: [{ type: "CONTINUITY", value: true }], // Invalid: should be string
+      claims: [{ type: "CONTINUITY", value: { invalid: "object" } }], // Invalid: should be string or boolean
       suite: "ECDSA_P256_SHA256_1.0.0",
       signature: "mock-signature"
     };
@@ -1721,5 +1779,61 @@ describe("ShieldedVerifier Methods", () => {
 
     const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
     expect(result.valid).toBe(true);
+  });
+
+  it("getMetrics returns performance metrics", () => {
+    const metrics = verifier.getMetrics();
+    expect(metrics).toHaveProperty("verificationCount");
+    expect(metrics).toHaveProperty("avgVerificationMs");
+    expect(metrics).toHaveProperty("registryCallCount");
+    expect(metrics).toHaveProperty("avgRegistryCallMs");
+    expect(metrics).toHaveProperty("zkVerificationCount");
+    expect(metrics).toHaveProperty("avgZkVerificationMs");
+    expect(typeof metrics.verificationCount).toBe("number");
+    expect(typeof metrics.avgVerificationMs).toBe("number");
+  });
+
+  it("resetForTesting resets internal state", () => {
+    // Call resetForTesting (already called in beforeEach)
+    verifier.resetForTesting();
+    const metrics = verifier.getMetrics();
+    // Metrics should be reset
+    expect(metrics.verificationCount).toBe(0);
+    expect(metrics.registryCallCount).toBe(0);
+    expect(metrics.zkVerificationCount).toBe(0);
+  });
+});
+
+describe("crypto availability checks", () => {
+  it("throws when crypto.randomUUID is not available", () => {
+    const cryptoSpy = vi.spyOn(globalThis, 'crypto', 'get').mockReturnValue({} as any);
+    
+    const verifier = new ShieldedVerifier({ origin: "https://test.example" });
+    expect(() => {
+      verifier.createProofRequest({
+        requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+        policy: { requireStatusCheck: true, maxAgeSeconds: 300 },
+        callback: { method: "POST", url: "https://example.com/callback" }
+      });
+    }).toThrow("RANDOM_UUID_NOT_AVAILABLE");
+    
+    cryptoSpy.mockRestore();
+  });
+
+  it("throws when crypto.getRandomValues is not available", () => {
+    const cryptoSpy = vi.spyOn(globalThis, 'crypto', 'get').mockReturnValue({
+      randomUUID: () => "test-uuid"
+    } as any);
+    
+    const verifier = new ShieldedVerifier({ origin: "https://test.example" });
+    expect(() => {
+      verifier.createProofRequest({
+        requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+        policy: { requireStatusCheck: true, maxAgeSeconds: 300 },
+        callback: { method: "POST", url: "https://example.com/callback" }
+      });
+    }).toThrow("RANDOM_NOT_AVAILABLE");
+    
+    cryptoSpy.mockRestore();
   });
 });

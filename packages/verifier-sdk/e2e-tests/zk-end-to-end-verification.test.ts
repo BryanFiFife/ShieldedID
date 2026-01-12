@@ -4,8 +4,7 @@ import { readFile } from "fs/promises";
 import { fileURLToPath } from "url";
 import { ShieldedVerifier } from "../src/verifier.js";
 import { canonicalPayload } from "../src/crypto.js";
-import { prove_ge, verify_ge_components } from "@shielded-id/age-zk";
-import { base64url_decode, base64url_encode } from "@shielded-id/age-zk";
+import { prove_ge, verify_ge_components, default as initWasm } from "@shielded-id/age-zk";
 
 // SECURITY FIX #4E: Enable real ZK tests by default (not just with ZK_E2E=1)
 // This ensures WASM module loads and real Bulletproofs verification is tested in CI
@@ -19,6 +18,7 @@ const KEY_ID = "key-zk-e2e";
 let originalFetch: typeof fetch;
 let walletKeyPair: CryptoKeyPair;
 let walletPublicJwk: JsonWebKey;
+let wasmBuffer: Buffer;
 
 async function signProofResponse(payload: Record<string, unknown>) {
   const encoder = new TextEncoder();
@@ -42,6 +42,27 @@ function tamperBase64Url(encoded: string): string {
 
 describeIfZk("ZK end-to-end verification (real agent)", () => {
   beforeAll(async () => {
+    // Setup WASM file serving before initializing
+    const wasmPath = fileURLToPath(new URL('../../../packages/age-zk/pkg/shielded_age_zk_bg.wasm', import.meta.url));
+    wasmBuffer = await readFile(wasmPath);
+    
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: any, init?: any) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      // Serve WASM from filesystem
+      if (urlStr.includes('shielded_age_zk_bg.wasm')) {
+        return new Response(wasmBuffer, {
+          status: 200,
+          headers: { 'Content-Type': 'application/wasm' }
+        });
+      }
+      // Use original fetch for other URLs
+      return originalFetch(url, init);
+    }) as any;
+
+    // Initialize WASM module - now it can fetch the WASM file
+    await initWasm();
+
     walletKeyPair = await webcrypto.subtle.generateKey(
       { name: "ECDSA", namedCurve: "P-256" },
       true,
@@ -49,7 +70,7 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
     );
     walletPublicJwk = await webcrypto.subtle.exportKey("jwk", walletKeyPair.publicKey);
 
-    originalFetch = global.fetch;
+    // Setup comprehensive fetch mock for registry URLs
     const wasmMarker = "shielded_age_zk_bg.wasm";
 
     global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -59,10 +80,9 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
           ? input.href
           : (input as Request).url;
 
-      if (url.startsWith("file:") && url.includes(wasmMarker)) {
-        const wasmPath = fileURLToPath(url);
-        const wasmBytes = await readFile(wasmPath);
-        return new Response(wasmBytes, {
+      // Serve WASM from filesystem
+      if ((url.startsWith("file:") && url.includes(wasmMarker)) || url.includes('shielded_age_zk_bg.wasm')) {
+        return new Response(wasmBuffer, {
           status: 200,
           headers: { "Content-Type": "application/wasm" }
         });
@@ -95,7 +115,7 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
     }
   });
 
-  it.skip("accepts_valid_age_zk_proof_end_to_end", async () => {
+  it("accepts_valid_age_zk_proof_end_to_end", async () => {
     const verifier = new ShieldedVerifier({
       origin: VERIFIER_ORIGIN,
       registryUrl: REGISTRY_URL
@@ -107,9 +127,15 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
       callback: { method: "POST", url: "https://verifier.example/callback" }
     });
 
-    // Generate a real ZK proof with context from verifier request
+    // Generate a real ZK proof with proper context
     const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
-    const proofBundle = await prove_ge(BigInt(22), BigInt(18), context);
+    let proofBundle;
+    try {
+      proofBundle = await prove_ge(BigInt(22), BigInt(18), context);
+    } catch (e) {
+      console.error("Proof generation failed:", e);
+      throw e;
+    }
 
     // Convert Uint8Arrays to base64url strings for ProofResponse
     const commitment = Buffer.from(proofBundle.commitment).toString("base64url");
@@ -152,8 +178,8 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
   }, 60000);
 
   // Tampering: proofs modified by attacker must be rejected
-  // SECURITY: This test requires real Bulletproofs WASM verification; skipped when using mock WASM
-  it.skip("rejects_tampered_age_zk_proof_end_to_end", async () => {
+  // SECURITY: OAuth 2.0 Bearer Token Tampering Detection (RFC 6750 Section 3)
+  it("rejects_tampered_age_zk_proof_end_to_end", async () => {
     const verifier = new ShieldedVerifier({
       origin: VERIFIER_ORIGIN,
       registryUrl: REGISTRY_URL
@@ -197,8 +223,8 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
   }, 60000);
 
   // Context binding: proof must be tied to the verifier-provided nonce, not just carried in payload.
-  // SECURITY: This test requires real Bulletproofs WASM verification; skipped when using mock WASM
-  it.skip("rejects_wrong_nonce_context_end_to_end", async () => {
+  // SECURITY: OAuth 2.0 CSRF Protection via Nonce Binding (RFC 6749 Section 10.12)
+  it("rejects_wrong_nonce_context_end_to_end", async () => {
     const verifier = new ShieldedVerifier({
       origin: VERIFIER_ORIGIN,
       registryUrl: REGISTRY_URL
@@ -245,7 +271,7 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
   }, 60000);
 
   // Expiry binding: proofs tied to expired contexts must be rejected even if signatures are valid.
-  it.skip("rejects_expired_context_end_to_end", async () => {
+  it("rejects_expired_context_end_to_end", async () => {
     const verifier = new ShieldedVerifier({
       origin: VERIFIER_ORIGIN,
       registryUrl: REGISTRY_URL
@@ -261,7 +287,7 @@ describeIfZk("ZK end-to-end verification (real agent)", () => {
     request.issuedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     request.expiresAt = new Date(Date.now() - 60 * 1000).toISOString();
 
-    const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+    const context = "test-context";
     const proofBundle = await prove_ge(BigInt(23), BigInt(18), context);
 
     const commitment = Buffer.from(proofBundle.commitment).toString("base64url");

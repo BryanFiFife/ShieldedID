@@ -8,6 +8,20 @@ global.fetch = fetchMock;
 describe("ZK Agent Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Set required environment variable for tests
+    process.env.EXPECTED_AGENT_HASH = 'mocked-hash';
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        status: "healthy",
+        agent: "shielded-id-zk-agent",
+        version: "1.0.0"
+      }),
+      arrayBuffer: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3, 4, 5]).buffer)
+    });
+    // Mock the hash computation to avoid crypto issues in test environment
+    vi.spyOn(zkAgent as any, 'computeAgentHash').mockResolvedValue('mocked-hash');
     // Reset the singleton instance for each test
     (zkAgent as any).agentAvailable = false;
     (zkAgent as any).checkPromise = null;
@@ -21,7 +35,12 @@ describe("ZK Agent Service", () => {
     it("returns true when agent responds to health check", async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
-        status: 200
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          status: "healthy",
+          agent: "shielded-id-zk-agent",
+          version: "1.0.0"
+        })
       });
 
       const available = await zkAgent.isAgentAvailable();
@@ -61,7 +80,12 @@ describe("ZK Agent Service", () => {
     it("handles concurrent calls properly", async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
-        status: 200
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          status: "healthy",
+          agent: "shielded-id-zk-agent",
+          version: "1.0.0"
+        })
       });
 
       // Multiple concurrent calls should work

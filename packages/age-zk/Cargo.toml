@@ -13,11 +13,13 @@ bulletproofs = "3.0.1"
 curve25519-dalek-ng = "3.0"
 merlin = "2.0"
 rand = "0.7"
-getrandom = { version = "0.2", features = ["js"] }
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
 base64 = "0.21"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
 
 [dependencies.web-sys]
 version = "0.3"

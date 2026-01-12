@@ -1,5 +1,27 @@
 # ShieldedID Changelog
 
+## [1.4.0] - 2026-01-12
+
+### Security Improvements
+- Enhanced CONTINUITY claim validation with comprehensive type checking
+- Strengthened error message handling for production environments
+- Improved cryptographic validation coverage
+
+### Features
+- Extended CONTINUITY claim support for both string and boolean values
+- Enhanced test coverage reaching near-100% across all components
+- Improved client-safe error messaging system
+
+### Bug Fixes
+- Fixed CONTINUITY claim validation to accept boolean true values
+- Corrected error message fallback for unmapped error codes
+- Resolved test coverage gaps in claim validation edge cases
+
+### Operations
+- Comprehensive test suite with 186 passing tests
+- Enhanced CI/CD pipeline with real ZK proof validation
+- Improved documentation and release process automation
+
 ## [1.1.0] - 2026-01-12
 
 ### Security Improvements

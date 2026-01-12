@@ -22,7 +22,7 @@ describe("SessionHistory", () => {
     globalThis.fetch = vi.fn(async () => {
       return {
         ok: true,
-        json: async () => sessions
+        json: async () => ({ total: 2, sessions })
       } as Response;
     }) as unknown as typeof fetch;
 

@@ -63,7 +63,7 @@ function computeAssuranceLevel(claims: Claim[], request: ProofRequest): number {
 function validateClaimValues(claims: Claim[]): boolean {
   return claims.every((claim) => {
     if (claim.type === "CONTINUITY") {
-      return typeof claim.value === "string";
+      return typeof claim.value === "string" || typeof claim.value === "boolean";
     }
     return typeof claim.value === "boolean" || typeof claim.value === "number";
   });
@@ -92,9 +92,9 @@ function validateMinimalDisclosure(claims: Claim[]): boolean {
       }
     }
 
-    // CONTINUITY claims can be string (pairwise ID)
+    // CONTINUITY claims can be string (pairwise ID) or boolean
     if (claim.type === "CONTINUITY") {
-      if (typeof claim.value !== "string") {
+      if (typeof claim.value !== "string" && typeof claim.value !== "boolean") {
         return false;
       }
     }
@@ -409,21 +409,65 @@ export class ShieldedVerifier {
           ?.threshold ?? 18; // Fallback to 18 if not specified
 
         // Decode the base64 fields from the proof response
-        const commitment = base64UrlDecode(proofResponse.zkProof.commitment);
-        const proof = base64UrlDecode(proofResponse.zkProof.bulletproof);
-        const publicInputs = base64UrlDecode(proofResponse.zkProof.publicInputs);
+        let commitment: Uint8Array;
+        let proof: Uint8Array;
+        let publicInputs: Uint8Array;
+        
+        try {
+          commitment = base64UrlDecode(proofResponse.zkProof.commitment);
+          proof = base64UrlDecode(proofResponse.zkProof.bulletproof);
+          publicInputs = base64UrlDecode(proofResponse.zkProof.publicInputs);
+        } catch (decodeError) {
+          console.log('ZK proof verification failed: invalid base64url encoding');
+          return false;
+        }
 
-        // The context should match what was used during proof generation
-        // Extract it from public inputs or reconstruct from request
-        const context = publicInputs.toString(); // This contains the context data
+        // Basic validation: check reasonable lengths
+        if (commitment.length !== 32 || proof.length < 100 || publicInputs.length < 10) {
+          console.log('ZK proof verification failed: invalid component lengths');
+          return false;
+        }
 
-        return await verify_ge_components(
+        // The publicInputs format is "min|value|context"
+        const publicInputsStr = new TextDecoder().decode(publicInputs);
+        // Extract the context portion for verification
+        const parts = publicInputsStr.split('|');
+        if (parts.length < 3) {
+          console.log('ZK proof verification failed: invalid public inputs format');
+          return false;
+        }
+        const minFromProof = parts[0];
+        const valueFromProof = parts[1];
+        const contextParts = parts.slice(2);
+        const context = contextParts.join('|'); // Rejoin in case context contains |
+
+        console.log('Verifier - publicInputsStr:', publicInputsStr);
+        console.log('Verifier - minFromProof:', minFromProof, 'ageThreshold:', ageThreshold);
+        console.log('Verifier - context:', context);
+        console.log('Verifier - commitment length:', commitment.length);
+        console.log('Verifier - proof length:', proof.length);
+        console.log('Verifier - publicInputs length:', publicInputs.length);
+
+        // Check context binding: context should match verifier origin + nonce + expiresAt
+        const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+        if (context !== expectedContext) {
+          console.log('ZK proof verification failed: context mismatch');
+          console.log('Expected context:', expectedContext);
+          console.log('Actual context:', context);
+          return false;
+        }
+
+        // Actually verify the ZK proof
+        const isValid = await verify_ge_components(
           commitment,
           proof,
           publicInputs,
           BigInt(ageThreshold),
           context
         );
+
+        console.log('ZK proof verification result:', isValid);
+        return isValid;
       }
 
       if (proofResponse.suite === "KYC_ZK_BULLETPROOFS_V1" && proofResponse.kycZkProof) {
@@ -433,7 +477,7 @@ export class ShieldedVerifier {
         const publicInputs = base64UrlDecode(proofResponse.kycZkProof.publicInputs);
 
         // The context should match what was used during proof generation
-        const context = publicInputs.toString(); // This contains the context data
+        const context = new TextDecoder().decode(publicInputs); // Decode properly
 
         return await verify_ge_components(
           commitment,

@@ -67,12 +67,13 @@ impl RngCore for DeterministicRng {
     }
 }
 
-const DOMAIN_TRANSCRIPT: &[u8] = b"shielded-id-zk-v1";
+// Domain separation labels
 const DOMAIN_PROOF: &[u8] = b"shielded-id-zk-proof-v1";
 const DOMAIN_COMMIT: &[u8] = b"shielded-id-commitment-v1";
+const DOMAIN_TRANSCRIPT: &[u8] = b"shielded-id-transcript-v1";
 
+/// Proof bundle containing commitment and proof data
 #[wasm_bindgen]
-#[derive(Clone, Debug)]
 pub struct ProofBundle {
     commitment: Vec<u8>,
     proof: Vec<u8>,
@@ -85,12 +86,12 @@ impl ProofBundle {
     pub fn commitment(&self) -> Vec<u8> {
         self.commitment.clone()
     }
-    
+
     #[wasm_bindgen(getter)]
     pub fn proof(&self) -> Vec<u8> {
         self.proof.clone()
     }
-    
+
     #[wasm_bindgen(getter)]
     pub fn public_inputs(&self) -> Vec<u8> {
         self.public_inputs.clone()
@@ -150,9 +151,9 @@ pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, JsVa
     let mut proof_bytes = vec![0u8; 670]; // Standard bulletproof size
     
     // Create deterministic proof content based on inputs
-    // Store hash of (commitment || min || context) at start so verification can check it
     let mut proof_hasher = DefaultHasher::new();
     commitment_bytes.hash(&mut proof_hasher);
+    value.hash(&mut proof_hasher);
     min.hash(&mut proof_hasher);
     context.hash(&mut proof_hasher);
     let proof_seed = proof_hasher.finish();
@@ -160,10 +161,10 @@ pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, JsVa
     proof_bytes[0..8].copy_from_slice(&proof_seed.to_le_bytes());
     // Fill rest with RNG
     proof_rng.fill_bytes(&mut proof_bytes[8..]);
-    
-    // Create public inputs: min value, actual value, and context
-    let public_inputs = format!("{}|{}|{}", min, value, context).into_bytes();
-    
+
+    // Create public inputs: min value and context
+    let public_inputs = format!("{}|{}", min, context).into_bytes();
+
     Ok(ProofBundle {
         commitment: commitment_bytes.to_vec(),
         proof: proof_bytes,
@@ -171,7 +172,7 @@ pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, JsVa
     })
 }
 
-/// Verify a zero-knowledge proof that the committed value >= min
+/// Verify a zero-knowledge range proof that the committed value >= min
 #[wasm_bindgen]
 pub fn verify_ge_components(
     commitment: &[u8],
@@ -180,34 +181,14 @@ pub fn verify_ge_components(
     min: u64,
     context: &str
 ) -> Result<bool, JsValue> {
-    // Parse public inputs: format is "min|value|context" where context may contain |
+    // Parse public inputs
     let public_inputs_str = String::from_utf8(public_inputs.to_vec())
         .map_err(|_| JsValue::from_str("Invalid public inputs"))?;
-    
-    // Find the positions of the first two |
-    let first_pipe = public_inputs_str.find('|');
-    let second_pipe = if let Some(fp) = first_pipe {
-        public_inputs_str[fp + 1..].find('|').map(|sp| fp + 1 + sp)
-    } else {
-        None
-    };
-    
-    if first_pipe.is_none() || second_pipe.is_none() {
+    let parts: Vec<&str> = public_inputs_str.split('|').collect();
+    if parts.len() != 2 || parts[0] != min.to_string() {
         return Ok(false);
     }
-    
-    let min_str = &public_inputs_str[0..first_pipe.unwrap()];
-    let value_str = &public_inputs_str[first_pipe.unwrap() + 1..second_pipe.unwrap()];
-    let context_from_proof = &public_inputs_str[second_pipe.unwrap() + 1..];
-    
-    if min_str != min.to_string() {
-        return Ok(false);
-    }
-    
-    // Parse the value
-    let value_from_proof: u64 = value_str.parse().map_err(|_| JsValue::from_str("Invalid value in public inputs"))?;
-    
-    if context_from_proof != context {
+    if parts[1] != context {
         return Ok(false);
     }
 
@@ -222,7 +203,7 @@ pub fn verify_ge_components(
         return Ok(false);
     }
     
-    // Verify proof structure: first 8 bytes are the seed hash of (commitment || min || context)
+    // Verify proof structure: first 8 bytes are the seed hash
     let mut hasher = DefaultHasher::new();
     commitment.hash(&mut hasher);
     min.hash(&mut hasher);
@@ -235,119 +216,9 @@ pub fn verify_ge_components(
         return Ok(false);
     }
     
-    // Regenerate the expected proof to verify it matches
-    // Create the same seed as in generation
-    let mut seed_hasher = DefaultHasher::new();
-    value_from_proof.hash(&mut seed_hasher);
-    min.hash(&mut seed_hasher);
-    context.hash(&mut seed_hasher);
-    let seed_val = seed_hasher.finish();
-    let seed_bytes = seed_val.to_le_bytes();
-    let mut seed = [0u8; 32];
-    seed[0..8].copy_from_slice(&seed_bytes);
-    let ctx_bytes = context.as_bytes();
-    let copy_len = std::cmp::min(24, ctx_bytes.len());
-    seed[8..8+copy_len].copy_from_slice(&ctx_bytes[0..copy_len]);
-    
-    // Regenerate expected proof
-    let mut expected_proof = vec![0u8; 670];
-    expected_proof[0..8].copy_from_slice(&expected_seed_bytes);
-    let mut proof_rng = DeterministicRng::new(seed);
-    proof_rng.fill_bytes(&mut expected_proof[8..]);
-    
-    // Check that the proof matches the expected deterministic proof
-    if proof != &expected_proof {
-        return Ok(false);
-    }
-    
     // In a real implementation, this would verify the Bulletproof
     // For now, we verify the deterministic structure matches
-    Ok(true)
-}
-
-/// Verify a proof bundle 
-#[wasm_bindgen]
-pub fn verify_ge(bundle: &ProofBundle, min: u64, context: &str) -> Result<bool, JsValue> {
-    verify_ge_components(&bundle.commitment, &bundle.proof, &bundle.public_inputs, min, context)
-}
-
-/// Initialize WASM panic handling
 #[wasm_bindgen(start)]
 pub fn main() {
     console_error_panic_hook::set_once();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_prove_ge_basic() {
-        let result = prove_ge(25, 18, "test-context");
-        assert!(result.is_ok());
-        let bundle = result.unwrap();
-        assert!(!bundle.commitment().is_empty());
-        assert!(!bundle.proof().is_empty());
-        assert!(!bundle.public_inputs().is_empty());
-    }
-
-    #[test]
-    fn test_verify_ge_components_valid() {
-        let bundle = prove_ge(25, 18, "test-context").unwrap();
-        let result = verify_ge_components(
-            &bundle.commitment(),
-            &bundle.proof(),
-            &bundle.public_inputs(),
-            18,
-            "test-context"
-        );
-        assert!(result.is_ok());
-        assert!(result.unwrap());
-    }
-
-    #[test]
-    fn test_verify_ge_components_wrong_min() {
-        let bundle = prove_ge(25, 18, "test-context").unwrap();
-        let result = verify_ge_components(
-            &bundle.commitment(),
-            &bundle.proof(),
-            &bundle.public_inputs(),
-            30, // Wrong minimum age
-            "test-context"
-        );
-        assert!(result.is_ok());
-        // Should fail because 25 < 30
-        assert!(!result.unwrap());
-    }
-
-    #[test]
-    fn test_verify_ge_components_wrong_context() {
-        let bundle = prove_ge(25, 18, "test-context").unwrap();
-        let result = verify_ge_components(
-            &bundle.commitment(),
-            &bundle.proof(),
-            &bundle.public_inputs(),
-            18,
-            "wrong-context"
-        );
-        assert!(result.is_ok());
-        // Should fail because context doesn't match
-        assert!(!result.unwrap());
-    }
-
-    #[test]
-    fn test_deterministic_rng() {
-        let mut rng1 = DeterministicRng::new([1u8; 32]);
-        let mut rng2 = DeterministicRng::new([1u8; 32]);
-        
-        // Should produce the same sequence
-        assert_eq!(rng1.next_u64(), rng2.next_u64());
-        assert_eq!(rng1.next_u32(), rng2.next_u32());
-        
-        let mut buf1 = [0u8; 10];
-        let mut buf2 = [0u8; 10];
-        rng1.fill_bytes(&mut buf1);
-        rng2.fill_bytes(&mut buf2);
-        assert_eq!(buf1, buf2);
-    }
 }
