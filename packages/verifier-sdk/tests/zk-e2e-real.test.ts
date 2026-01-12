@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it, expect, beforeEach } from "vitest";
 import { ShieldedVerifier } from "../src/verifier.js";
 import { stableStringify } from "../src/utils.js";

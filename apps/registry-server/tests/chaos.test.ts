@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Shielded ID Chaos Engineering Test Suite
  * File: apps/registry-server/tests/chaos.test.ts
