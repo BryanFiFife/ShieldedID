@@ -1,7 +1,7 @@
 import { generatePairwiseSubjectId } from "./pairwise-id";
 import { decryptSigningKey, signWithPasskey, signWithSoftwareKey } from "./keys";
 import type { VaultPayload } from "./vault";
-import { proveGE } from "@shielded-id/age-zk";
+import { prove_ge } from "@shielded-id/age-zk";
 import { zkAgent } from "./zk-agent";
 
 // SECURITY FIX #4: Mutex for thread-safe ZK proof generation
@@ -194,7 +194,8 @@ export async function generateProof(
             );
           } else {
             console.debug("[Proof] Using WASM fallback for age proof");
-            proofBundle = await proveGE(age, 18, request.verifierOrigin, request.nonce, request.expiresAt || "");
+            const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+            proofBundle = await prove_ge(age, 18, context);
           }
 
           response.zkProof = {
@@ -234,7 +235,8 @@ export async function generateProof(
           );
         } else {
           console.debug("[Proof] Using WASM fallback for KYC proof");
-          proofBundle = await proveGE(vault.kycLevel, kycMinLevel, request.verifierOrigin, request.nonce, request.expiresAt || "");
+          const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+          proofBundle = await prove_ge(vault.kycLevel, kycMinLevel, context);
         }
 
         response.kycZkProof = {

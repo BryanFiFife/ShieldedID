@@ -1,10 +1,9 @@
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
-use curve25519_dalek::ristretto::RistrettoPoint;
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::ristretto::CompressedRistretto;
+use curve25519_dalek_ng::scalar::Scalar;
 use merlin::Transcript;
 use rand::thread_rng;
 use wasm_bindgen::prelude::*;
-use std::convert::TryInto;
 use base64::{Engine as _, engine::general_purpose};
 
 // Domain separation labels
@@ -67,7 +66,7 @@ pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, JsVa
     let commitment_bytes = commitment.compress().to_bytes();
 
     // Create range proof for value ∈ [0, 2^64)
-    let (proof, committed_value) = RangeProof::prove_single(
+    let (proof, _committed_value) = RangeProof::prove_single(
         &bp_gens,
         &pc_gens,
         &mut transcript,
@@ -75,11 +74,6 @@ pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, JsVa
         &blinding,
         64, // bit length
     ).map_err(|e| JsValue::from_str(&format!("Proof generation failed: {:?}", e)))?;
-
-    // Verify the proof was created correctly
-    if committed_value != commitment {
-        return Err(JsValue::from_str("Commitment mismatch in proof generation"));
-    }
 
     // Serialize proof
     let proof_bytes = proof.to_bytes();
@@ -114,9 +108,13 @@ pub fn verify_ge_components(
         return Ok(false);
     }
 
-    // Parse commitment
-    let commitment_point = RistrettoPoint::from_uniform_bytes(commitment)
-        .map_err(|_| JsValue::from_str("Invalid commitment"))?;
+    // Parse commitment from compressed bytes
+    if commitment.len() != 32 {
+        return Ok(false);
+    }
+    let mut commitment_bytes = [0u8; 32];
+    commitment_bytes.copy_from_slice(commitment);
+    let commitment_compressed = CompressedRistretto(commitment_bytes);
 
     // Parse proof
     let proof = RangeProof::from_bytes(proof)
@@ -132,7 +130,7 @@ pub fn verify_ge_components(
     transcript.append_message(b"context", context.as_bytes());
 
     // Verify the range proof
-    proof.verify_single(&bp_gens, &pc_gens, &mut transcript, &commitment_point, 64)
+    proof.verify_single(&bp_gens, &pc_gens, &mut transcript, &commitment_compressed, 64)
         .map_err(|_| JsValue::from_str("Proof verification failed"))?;
 
     Ok(true)

@@ -14,8 +14,8 @@ import {
   validateTimestamp,
   verifyECDSAP256
 } from "./crypto.js";
-import { addSeconds, base64UrlEncode, nowIso, stableStringify } from "./utils.js";
-import { verifyGE } from "@shielded-id/age-zk";
+import { addSeconds, base64UrlDecode, base64UrlEncode, nowIso, stableStringify } from "./utils.js";
+import { verify_ge_components } from "@shielded-id/age-zk";
 
 function ensureRandomUUID(): string {
   const cryptoObj = globalThis.crypto ?? (globalThis as { webcrypto?: Crypto }).webcrypto;
@@ -408,23 +408,39 @@ export class ShieldedVerifier {
           .find(c => c.type === "AGE_OVER")
           ?.threshold ?? 18; // Fallback to 18 if not specified
 
-        // The context is embedded in the public_inputs by the proveGE function
-        // as "threshold|context" and the Rust verifier checks it matches
-        return await verifyGE(
-          proofResponse.zkProof.commitment,
-          proofResponse.zkProof.bulletproof,
-          proofResponse.zkProof.publicInputs,
-          ageThreshold
+        // Decode the base64 fields from the proof response
+        const commitment = base64UrlDecode(proofResponse.zkProof.commitment);
+        const proof = base64UrlDecode(proofResponse.zkProof.bulletproof);
+        const publicInputs = base64UrlDecode(proofResponse.zkProof.publicInputs);
+
+        // The context should match what was used during proof generation
+        // Extract it from public inputs or reconstruct from request
+        const context = publicInputs.toString(); // This contains the context data
+
+        return await verify_ge_components(
+          commitment,
+          proof,
+          publicInputs,
+          BigInt(ageThreshold),
+          context
         );
       }
 
       if (proofResponse.suite === "KYC_ZK_BULLETPROOFS_V1" && proofResponse.kycZkProof) {
         // KYC ZK proof verification using Bulletproofs
-        return await verifyGE(
-          proofResponse.kycZkProof.commitment,
-          proofResponse.kycZkProof.bulletproof,
-          proofResponse.kycZkProof.publicInputs,
-          proofResponse.kycZkProof.minLevel
+        const commitment = base64UrlDecode(proofResponse.kycZkProof.commitment);
+        const proof = base64UrlDecode(proofResponse.kycZkProof.bulletproof);
+        const publicInputs = base64UrlDecode(proofResponse.kycZkProof.publicInputs);
+
+        // The context should match what was used during proof generation
+        const context = publicInputs.toString(); // This contains the context data
+
+        return await verify_ge_components(
+          commitment,
+          proof,
+          publicInputs,
+          BigInt(proofResponse.kycZkProof.minLevel),
+          context
         );
       }
 

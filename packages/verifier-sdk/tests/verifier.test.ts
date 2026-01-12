@@ -4,12 +4,18 @@ import { verifyECDSAP256 } from "../src/crypto.js";
 
 // Mock the age-zk module to avoid WASM loading in tests
 vi.mock('@shielded-id/age-zk', () => ({
+  prove_ge: vi.fn().mockResolvedValue({
+    commitment: new Uint8Array(32),
+    proof: new Uint8Array(100),
+    public_inputs: new Uint8Array(50)
+  }),
   proveGE: vi.fn().mockResolvedValue({
     commitment: 'mock-commitment',
     proof: 'mock-proof', 
     publicInputs: 'mock-inputs'
   }),
-  verifyGE: vi.fn().mockImplementation(async () => true)
+  verify_ge: vi.fn().mockImplementation(async () => true),
+  verify_ge_components: vi.fn().mockImplementation(async () => true)
 }));
 
 // Mock the crypto functions to avoid signature verification issues
@@ -626,9 +632,14 @@ describe("ShieldedVerifier ZK Proofs", () => {
       callback: { method: "POST", url: "https://shop.example/callback" }
     });
 
-    // Generate a real ZK proof using WASM
-    const { proveGE } = await import('@shielded-id/age-zk');
-    const proofBundle = await proveGE(25, 18, request.verifierOrigin, request.nonce, request.expiresAt);
+    // Generate a real ZK proof using WASM (mocked in tests)
+    const { prove_ge } = await import('@shielded-id/age-zk');
+    const proofBundle = await prove_ge(BigInt(25), BigInt(18), `${request.verifierOrigin}|${request.nonce}|${request.expiresAt}`);
+
+    // Convert Uint8Arrays to base64url for response
+    const commitment = Buffer.from(proofBundle.commitment).toString("base64url");
+    const bulletproof = Buffer.from(proofBundle.proof).toString("base64url");
+    const publicInputs = Buffer.from(proofBundle.public_inputs).toString("base64url");
 
     const proof = {
       requestId: request.requestId,
@@ -640,9 +651,9 @@ describe("ShieldedVerifier ZK Proofs", () => {
       suite: "AGE_ZK_BULLETPROOFS_V1",
       signature: "mock-signature",
       zkProof: {
-        commitment: proofBundle.commitment,
-        bulletproof: proofBundle.proof,
-        publicInputs: proofBundle.publicInputs
+        commitment,
+        bulletproof,
+        publicInputs
       }
     };
 
@@ -659,9 +670,14 @@ describe("ShieldedVerifier ZK Proofs", () => {
       callback: { method: "POST", url: "https://shop.example/callback" }
     });
 
-    // Generate a real KYC ZK proof using WASM
-    const { proveGE } = await import('@shielded-id/age-zk');
-    const proofBundle = await proveGE(3, 2, request.verifierOrigin, request.nonce, request.expiresAt);
+    // Generate a real KYC ZK proof using WASM (mocked in tests)
+    const { prove_ge } = await import('@shielded-id/age-zk');
+    const proofBundle = await prove_ge(BigInt(3), BigInt(2), `${request.verifierOrigin}|${request.nonce}|${request.expiresAt}`);
+
+    // Convert Uint8Arrays to base64url for response
+    const commitment = Buffer.from(proofBundle.commitment).toString("base64url");
+    const bulletproof = Buffer.from(proofBundle.proof).toString("base64url");
+    const publicInputs = Buffer.from(proofBundle.public_inputs).toString("base64url");
 
     const proof = {
       requestId: request.requestId,
@@ -673,9 +689,9 @@ describe("ShieldedVerifier ZK Proofs", () => {
       suite: "KYC_ZK_BULLETPROOFS_V1",
       signature: "mock-signature",
       kycZkProof: {
-        commitment: proofBundle.commitment,
-        bulletproof: proofBundle.proof,
-        publicInputs: proofBundle.publicInputs,
+        commitment,
+        bulletproof,
+        publicInputs,
         minLevel: 2
       }
     };
