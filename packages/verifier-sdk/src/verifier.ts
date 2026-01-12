@@ -342,6 +342,9 @@ function validateClaimsAgainstRequest(requested: ProofRequest["requestedClaims"]
         return false;
       }
     }
+  }
+
+  return true;
 }
 
 function hasForbiddenEvidence(claim: Claim, forbidden: string[]): boolean {
@@ -445,6 +448,20 @@ export class ShieldedVerifier {
     // Strict validation happens during proof verification
     if (!proofResponse.suite || typeof proofResponse.suite !== "string" || proofResponse.suite.length === 0) {
       return { valid: false, reason: "INVALID_SUITE", verifiedAt };
+    }
+
+    // Check if suite is supported (known suite types or contains known patterns)
+    const supportedSuitePatterns = [
+      "AGE_ZK",
+      "KYC_ZK",
+      "BULLETPROOFS",
+      "ECDSA",
+      "P256",
+      "RSA"
+    ];
+    const isSupportedSuite = supportedSuitePatterns.some(pattern => proofResponse.suite.includes(pattern));
+    if (!isSupportedSuite) {
+      return { valid: false, reason: "UNSUPPORTED_SUITE", verifiedAt };
     }
 
     // Validate ZK proof field consistency
