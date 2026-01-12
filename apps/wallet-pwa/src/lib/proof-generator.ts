@@ -4,6 +4,26 @@ import type { VaultPayload } from "./vault";
 import { proveGE } from "@shielded-id/age-zk";
 import { zkAgent } from "./zk-agent";
 
+// SECURITY FIX #4: Mutex for thread-safe ZK proof generation
+class Mutex {
+  private locked = false;
+  private queue: Array<() => void> = [];
+
+  async acquire<T>(fn: () => Promise<T>): Promise<T> {
+    while (this.locked) {
+      await new Promise(resolve => this.queue.push(resolve));
+    }
+    this.locked = true;
+    try {
+      return await fn();
+    } finally {
+      this.locked = false;
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
 const encoder = new TextEncoder();
 
 export interface ProofRequest {
@@ -96,6 +116,9 @@ function computeAge(dateOfBirth: string): number {
   return Math.floor(years);
 }
 
+// SECURITY FIX #4: Global mutex for ZK proof generation
+const zkMutex = new Mutex();
+
 export async function generateProof(
   request: ProofRequest,
   vault: VaultPayload,
@@ -155,31 +178,38 @@ export async function generateProof(
     const age = computeAge(vault.profile.dateOfBirth);
     if (age >= 18) {
       try {
-        // Check if ZK agent is available
-        const agentAvailable = await zkAgent.isAgentAvailable();
-        let proofBundle;
+        // SECURITY FIX #4: Use mutex to serialize ZK proof generation
+        await zkMutex.acquire(async () => {
+          // Check if ZK agent is available
+          const agentAvailable = await zkAgent.isAgentAvailable();
+          let proofBundle;
 
-        if (agentAvailable) {
-          console.debug("[Proof] Using ZK agent for age proof");
-          proofBundle = await zkAgent.generateAgeProof(
-            age,
-            request.verifierOrigin,
-            request.nonce,
-            request.expiresAt || ""
-          );
-        } else {
-          console.debug("[Proof] Using WASM fallback for age proof");
-          proofBundle = await proveGE(age, 18, request.verifierOrigin, request.nonce, request.expiresAt || "");
-        }
+          if (agentAvailable) {
+            console.debug("[Proof] Using ZK agent for age proof");
+            proofBundle = await zkAgent.generateAgeProof(
+              age,
+              request.verifierOrigin,
+              request.nonce,
+              request.expiresAt || ""
+            );
+          } else {
+            console.debug("[Proof] Using WASM fallback for age proof");
+            proofBundle = await proveGE(age, 18, request.verifierOrigin, request.nonce, request.expiresAt || "");
+          }
 
-        response.zkProof = {
-          commitment: proofBundle.commitment,
-          bulletproof: proofBundle.proof,
-          publicInputs: proofBundle.publicInputs
-        };
+          response.zkProof = {
+            commitment: proofBundle.commitment,
+            bulletproof: proofBundle.proof,
+            publicInputs: proofBundle.publicInputs
+          };
+        });
       } catch (err) {
-        console.warn("[Proof] ZK proof generation failed, falling back to predicate:", err);
-        // Continue with predicate proof
+        console.warn("[Proof] ZK age proof generation failed, falling back to predicate:", err);
+        // SECURITY FIX #1: Change suite to non-ZK and clear zkProof when ZK generation fails
+        // This prevents verification rejection when ZK is unavailable
+        response.suite = "ECDSA_P256_SHA256_1.0.0";
+        delete response.zkProof;
+        // Continue with predicate proof instead of invalid ZK-labeled proof
       }
     }
   }
@@ -187,33 +217,39 @@ export async function generateProof(
   // Generate ZK proof for KYC if needed
   if (useKycZkProof && vault.kycLevel && vault.kycLevel >= kycMinLevel) {
     try {
-      // Check if ZK agent is available
-      const agentAvailable = await zkAgent.isAgentAvailable();
-      let proofBundle;
+      // SECURITY FIX #4: Use mutex to serialize ZK proof generation
+      await zkMutex.acquire(async () => {
+        // Check if ZK agent is available
+        const agentAvailable = await zkAgent.isAgentAvailable();
+        let proofBundle;
 
-      if (agentAvailable) {
-        console.debug("[Proof] Using ZK agent for KYC proof");
-        proofBundle = await zkAgent.generateAssuranceProof(
-          vault.kycLevel,
-          kycMinLevel,
-          request.verifierOrigin,
-          request.nonce,
-          request.expiresAt || ""
-        );
-      } else {
-        console.debug("[Proof] Using WASM fallback for KYC proof");
-        proofBundle = await proveGE(vault.kycLevel, kycMinLevel, request.verifierOrigin, request.nonce, request.expiresAt || "");
-      }
+        if (agentAvailable) {
+          console.debug("[Proof] Using ZK agent for KYC proof");
+          proofBundle = await zkAgent.generateAssuranceProof(
+            vault.kycLevel,
+            kycMinLevel,
+            request.verifierOrigin,
+            request.nonce,
+            request.expiresAt || ""
+          );
+        } else {
+          console.debug("[Proof] Using WASM fallback for KYC proof");
+          proofBundle = await proveGE(vault.kycLevel, kycMinLevel, request.verifierOrigin, request.nonce, request.expiresAt || "");
+        }
 
-      response.kycZkProof = {
-        commitment: proofBundle.commitment,
-        bulletproof: proofBundle.proof,
-        publicInputs: proofBundle.publicInputs,
-        minLevel: kycMinLevel
-      };
+        response.kycZkProof = {
+          commitment: proofBundle.commitment,
+          bulletproof: proofBundle.proof,
+          publicInputs: proofBundle.publicInputs,
+          minLevel: kycMinLevel
+        };
+      });
     } catch (err) {
       console.warn("[Proof] KYC ZK proof generation failed, falling back to predicate:", err);
-      // Continue with predicate proof
+      // SECURITY FIX #1: Change suite to non-ZK and clear kycZkProof when ZK generation fails
+      response.suite = "ECDSA_P256_SHA256_1.0.0";
+      delete response.kycZkProof;
+      // Continue with predicate proof instead of invalid ZK-labeled proof
     }
   }
 

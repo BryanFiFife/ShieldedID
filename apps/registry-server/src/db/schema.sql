@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS wallet_keys (
   webauthn_credential_id TEXT NULL,
   created_at TEXT NOT NULL,
   revoked_at TEXT NULL,
+  -- SECURITY FIX #4B: Persist key expiration (365 days from creation)
+  expires_at TEXT NOT NULL DEFAULT (datetime(datetime('now'), '+365 days')),
   FOREIGN KEY (wallet_id) REFERENCES wallets(wallet_id) ON DELETE CASCADE
 );
 
@@ -85,6 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_wallets_created_at ON wallets(created_at);
 CREATE INDEX IF NOT EXISTS idx_wallet_keys_wallet_id ON wallet_keys(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_keys_created_at ON wallet_keys(created_at);
 CREATE INDEX IF NOT EXISTS idx_wallet_keys_revoked_at ON wallet_keys(revoked_at);
+-- SECURITY FIX #5B: Index for efficient expiration queries
+CREATE INDEX IF NOT EXISTS idx_wallet_keys_expires_at ON wallet_keys(expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_revocations_effective_at ON revocations(effective_at);
 CREATE INDEX IF NOT EXISTS idx_revocations_target_id ON revocations(target_id);

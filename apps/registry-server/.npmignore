@@ -1,0 +1,11 @@
+*.test.ts
+*.spec.ts
+tests/
+coverage/
+.env*
+.vscode/
+.idea/
+**/*.map
+dist/
+build/
+vitest.config.ts

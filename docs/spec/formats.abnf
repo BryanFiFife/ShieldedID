@@ -1,0 +1,230 @@
+; Shielded ID Protocol Message Grammars
+; Augmented Backus-Naur Form (ABNF) per RFC 5234
+; Date: January 11, 2026
+
+; ============================================================
+; Core Data Types
+; ============================================================
+
+HEXDIG       = DIGIT / "A" / "B" / "C" / "D" / "E" / "F"
+             / "a" / "b" / "c" / "d" / "e" / "f"
+
+base64url    = 1*( ALPHA / DIGIT / "-" / "_" )
+             ; RFC 4648 URL-safe base64 without padding
+
+iso8601      = 4DIGIT "-" 2DIGIT "-" 2DIGIT "T"
+               2DIGIT ":" 2DIGIT ":" 2DIGIT "Z"
+             ; ISO 8601 UTC timestamp
+
+uuid         = 8HEXDIG "-" 4HEXDIG "-" 4HEXDIG "-"
+               4HEXDIG "-" 12HEXDIG
+             ; RFC 4122 UUID format
+
+identifier   = 1*( ALPHA / DIGIT / "_" / "-" )
+
+; ============================================================
+; ProofRequest
+; ============================================================
+
+proof-request = "{"
+                  %x22 "requestId" %x22 ":" string ","
+                  %x22 "nonce" %x22 ":" base64url ","
+                  %x22 "timestamp" %x22 ":" iso8601 ","
+                  %x22 "requestedClaims" %x22 ":" claim-array
+                  [ "," context-field ]
+                "}"
+
+claim-array = "[" claim-object *( "," claim-object ) "]"
+            / "[]"
+
+claim-object = "{"
+                 %x22 "claimType" %x22 ":" claim-type ","
+                 %x22 "claimValue" %x22 ":" claim-value
+                 [ "," %x22 "credentialType" %x22 ":" credential-type ]
+               "}"
+
+claim-type = %x22 claim-type-name %x22
+
+claim-type-name = "AGE_OVER"
+                / "KYC_LEVEL"
+                / "CONTINUITY"
+                / "INCOME_BRACKET"
+                / "RESIDENCY"
+                / identifier
+
+claim-value = number / string / boolean
+
+credential-type = %x22 credential-type-name %x22
+
+credential-type-name = "GOVERNMENT_ID"
+                     / "DRIVER_LICENSE"
+                     / "PASSPORT"
+                     / "UTILITY_BILL"
+                     / identifier
+
+context-field = %x22 "context" %x22 ":" "{"
+                  %x22 "origin" %x22 ":" string
+                  [ "," %x22 "userAgent" %x22 ":" string ]
+                  [ "," %x22 "sessionId" %x22 ":" string ]
+                "}"
+
+; ============================================================
+; ProofResponse
+; ============================================================
+
+proof-response = "{"
+                   %x22 "requestId" %x22 ":" string ","
+                   %x22 "keyId" %x22 ":" string ","
+                   %x22 "pairwiseSubjectId" %x22 ":" string ","
+                   %x22 "claimsVerified" %x22 ":" claims-verified-array ","
+                   %x22 "signature" %x22 ":" base64url ","
+                   %x22 "algorithm" %x22 ":" algorithm-id ","
+                   %x22 "issuanceDate" %x22 ":" iso8601 ","
+                   %x22 "expirationDate" %x22 ":" iso8601 ","
+                   %x22 "assuranceLevel" %x22 ":" assurance-level
+                 "}"
+
+claims-verified-array = "[" claim-verified-object
+                        *( "," claim-verified-object ) "]"
+                      / "[]"
+
+claim-verified-object = "{"
+                          %x22 "claimType" %x22 ":" claim-type ","
+                          %x22 "claimValue" %x22 ":" claim-value
+                          [ "," %x22 "proof" %x22 ":" base64url ]
+                        "}"
+
+algorithm-id = %x22 algorithm-name %x22
+
+algorithm-name = "ECDSA_P256_SHA256_1.0.0"
+               / "ECDSA_P384_SHA384_1.0.0"
+               / "Ed25519_1.0.0"
+               / "Bulletproofs_Ristretto_1.0.0"
+               / identifier
+
+assurance-level = %x22 0 %x22     ; Unverified
+                / %x22 1 %x22     ; Self-asserted
+                / %x22 2 %x22     ; Issuer-verified
+                / %x22 3 %x22     ; High-assurance (government, bank)
+
+; ============================================================
+; Registry Key
+; ============================================================
+
+registry-key = "{"
+                 %x22 "keyId" %x22 ":" string ","
+                 %x22 "publicKey" %x22 ":" public-key-jwk ","
+                 %x22 "algorithm" %x22 ":" algorithm-id ","
+                 %x22 "issuerId" %x22 ":" string ","
+                 %x22 "issuedAt" %x22 ":" iso8601 ","
+                 %x22 "expiresAt" %x22 ":" iso8601 ","
+                 %x22 "status" %x22 ":" key-status
+                 [ "," %x22 "revokedAt" %x22 ":" iso8601 ]
+               "}"
+
+public-key-jwk = "{"
+                   %x22 "kty" %x22 ":" %x22 "EC" %x22 ","
+                   %x22 "crv" %x22 ":" elliptic-curve ","
+                   %x22 "x" %x22 ":" base64url ","
+                   %x22 "y" %x22 ":" base64url
+                 "}"
+
+elliptic-curve = %x22 "P-256" %x22
+               / %x22 "P-384" %x22
+               / %x22 "Ed25519" %x22
+
+key-status = %x22 "ACTIVE" %x22
+           / %x22 "REVOKED" %x22
+           / %x22 "EXPIRED" %x22
+           / %x22 "SUSPENDED" %x22
+
+; ============================================================
+; Revocation Status
+; ============================================================
+
+revocation-status = "{"
+                     %x22 "keyId" %x22 ":" string ","
+                     %x22 "status" %x22 ":" key-status ","
+                     [ %x22 "revokedAt" %x22 ":" iso8601 "," ]
+                     [ %x22 "reason" %x22 ":" revocation-reason "," ]
+                     %x22 "registryTimestamp" %x22 ":" iso8601 ","
+                     %x22 "cacheExpiry" %x22 ":" iso8601
+                   "}"
+
+revocation-reason = %x22 "COMPROMISED" %x22
+                  / %x22 "USER_INITIATED" %x22
+                  / %x22 "LOST_DEVICE" %x22
+                  / %x22 "KEY_ROTATION" %x22
+                  / %x22 "ISSUER_REQUEST" %x22
+
+; ============================================================
+; Revocation Request
+; ============================================================
+
+revocation-request = "{"
+                      %x22 "keyId" %x22 ":" string ","
+                      %x22 "signature" %x22 ":" base64url ","
+                      %x22 "reason" %x22 ":" revocation-reason
+                    "}"
+
+; ============================================================
+; API Endpoints (Meta-grammar for documentation)
+; ============================================================
+
+; Proof Verification Endpoint
+; POST /api/verify
+; Request body: proof-response
+; Response: {"valid": boolean, "pairwiseSubjectId": string}
+
+; Registry Key Lookup
+; GET /api/keys/{keyId}
+; Response: registry-key
+
+; Revocation Check
+; GET /api/revocation/{keyId}
+; Response: revocation-status
+
+; Revoke Key
+; POST /api/revoke
+; Request body: revocation-request
+; Response: {"keyId": string, "revokedAt": iso8601}
+
+; ============================================================
+; Helper Grammars
+; ============================================================
+
+string = %x22 *( %x20-!%x21%x23-[%x5D-~
+         / %x5C ( %x22 / %x5C / %x2F / %x62 / %x66 / %x6E / %x72 / %x74
+         / %x75 4HEXDIG ) ) %x22
+
+number = [ "-" ] ( "0" / ( %x31-39 *DIGIT ) )
+         [ "." 1*DIGIT ]
+         [ ( "e" / "E" ) [ "+" / "-" ] 1*DIGIT ]
+
+boolean = %x74.72.75.65 / %x66.61.6C.73.65
+        ; true / false
+
+; ============================================================
+; Proof Exchange Flow (Flow Diagram)
+; ============================================================
+
+; Client (Verifier) generates ProofRequest:
+;   request = proof-request
+;
+; Sends to Wallet via:
+;   shielded-id://proof?requestId={id}&nonce={nonce}&claims={claims}
+;
+; Wallet receives, validates, prompts user, generates signature:
+;   response = proof-response
+;
+; Wallet sends response back to Client:
+;   https://verifier.example.com/callback?code={response_base64url}
+;
+; Client validates:
+;   - Signature verification: ECDSA(response.signature, CanonicalJSON(response))
+;   - Revocation check: GET /api/revocation/{response.keyId}
+;   - Claims match request: response.claimsVerified ⊇ request.requestedClaims
+;
+; Result:
+;   - If valid: Create session with response.pairwiseSubjectId
+;   - If invalid: Reject with error reason

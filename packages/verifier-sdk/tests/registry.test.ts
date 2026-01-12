@@ -82,14 +82,14 @@ describe("RegistryClient", () => {
     // Override the global fetch for this test
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (url: string) => {
-      if (url.includes("/v1/status/key-missing")) {
+      if (url.includes("/v1/keys/key-missing/status")) {
         return { ok: false, status: 404 } as Response;
       }
       return { ok: false, status: 500 } as Response;
     }) as typeof fetch;
 
     const client = new RegistryClient({ registryUrl: "https://registry.example" });
-    const result = await client.getKeyStatus("key-missing");
+    const result = await client.getKeyStatusViaNewEndpoint("key-missing");
     expect(result).toEqual({ revoked: false });
     
     globalThis.fetch = originalFetch;
@@ -119,7 +119,7 @@ describe("RegistryClient", () => {
       if (url.includes("/v1/status/wallet-error")) {
         return { ok: false, status: 500 } as Response;
       }
-      if (url.includes("/v1/status/key-error")) {
+      if (url.includes("/v1/keys/key-error/status")) {
         return { ok: false, status: 500 } as Response;
       }
       return { ok: false, status: 500 } as Response;
@@ -127,7 +127,7 @@ describe("RegistryClient", () => {
 
     const client = new RegistryClient({ registryUrl: "https://registry.example" });
     await expect(client.getWalletStatus("wallet-error")).rejects.toThrow("REGISTRY_ERROR");
-    await expect(client.getKeyStatus("key-error")).rejects.toThrow("REGISTRY_ERROR");
+    await expect(client.getKeyStatusViaNewEndpoint("key-error")).rejects.toThrow("REGISTRY_ERROR");
     
     globalThis.fetch = originalFetch;
   });

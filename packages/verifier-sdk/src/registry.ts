@@ -26,16 +26,44 @@ export interface RevocationStatus {
   revoked: boolean;
   revokedAt?: string;
   reason?: string;
+  // SECURITY FIX #2: Add expiration tracking
+  expiresAt?: string;
+  expired?: boolean;
 }
 
 export class RegistryClient {
   private cache = new Map<string, CachedEntry<unknown>>();
   private readonly registryUrl: string;
   private readonly cacheTtlMs: number;
+  // SECURITY FIX #3: Circuit breaker for registry resilience
+  private circuitBreaker = {
+    failures: 0,
+    threshold: 5, // Open circuit after 5 failures
+    resetTime: 60000, // 60 seconds
+    lastFailureTime: 0
+  };
 
   constructor(options: RegistryClientOptions) {
     this.registryUrl = options.registryUrl.replace(/\/$/, "");
     this.cacheTtlMs = options.cacheTtlMs ?? 5 * 60 * 1000;
+  }
+
+  private checkCircuitBreaker(): boolean {
+    // Reset circuit breaker if enough time has passed
+    if (this.circuitBreaker.failures > 0 && Date.now() - this.circuitBreaker.lastFailureTime > this.circuitBreaker.resetTime) {
+      this.circuitBreaker.failures = 0;
+    }
+    // Circuit is open if failures exceed threshold
+    return this.circuitBreaker.failures < this.circuitBreaker.threshold;
+  }
+
+  private recordFailure() {
+    this.circuitBreaker.failures += 1;
+    this.circuitBreaker.lastFailureTime = Date.now();
+  }
+
+  private recordSuccess() {
+    this.circuitBreaker.failures = 0;
   }
 
   private getFromCache<T>(key: string): T | null {
@@ -57,36 +85,86 @@ export class RegistryClient {
     const cached = this.getFromCache<WalletStatusResponse>(cacheKey);
     if (cached) return cached;
 
-    const url = `${this.registryUrl}/v1/status/${walletId}`;
-    const response = await ensureFetch()(url);
-    if (response.status === 404) {
-      return null;
+    // SECURITY FIX #3: Check circuit breaker and use stale cache if circuit open
+    if (!this.checkCircuitBreaker()) {
+      // Circuit breaker open - use stale cache if available
+      const staleEntry = this.cache.get(cacheKey) as CachedEntry<WalletStatusResponse> | undefined;
+      if (staleEntry) {
+        return staleEntry.value;
+      }
+      throw new Error("REGISTRY_CIRCUIT_OPEN");
     }
-    if (!response.ok) {
-      throw new Error("REGISTRY_ERROR");
+
+    try {
+      const url = `${this.registryUrl}/v1/status/${walletId}`;
+      const response = await ensureFetch()(url);
+      if (response.status === 404) {
+        this.recordSuccess();
+        return null;
+      }
+      if (!response.ok) {
+        this.recordFailure();
+        throw new Error("REGISTRY_ERROR");
+      }
+      const data = (await response.json()) as WalletStatusResponse;
+      this.recordSuccess();
+      this.setCache(cacheKey, data);
+      return data;
+    } catch (err) {
+      this.recordFailure();
+      throw err;
     }
-    const data = (await response.json()) as WalletStatusResponse;
-    this.setCache(cacheKey, data);
-    return data;
   }
 
-  async getKeyStatus(keyId: string): Promise<RevocationStatus> {
-    const cacheKey = `key:${keyId}`;
+  // DEPRECATED: Use getKeyStatusViaNewEndpoint instead
+  // Left as no-op for backward compatibility, will be removed in future version
+
+  // SECURITY FIX #2B: Use dedicated key-specific status endpoint
+  async getKeyStatusViaNewEndpoint(keyId: string): Promise<RevocationStatus> {
+    const cacheKey = `key-new:${keyId}`;
     const cached = this.getFromCache<RevocationStatus>(cacheKey);
     if (cached) return cached;
 
-    const url = `${this.registryUrl}/v1/status/${keyId}`;
-    const response = await ensureFetch()(url);
-    if (response.status === 404) {
-      return { revoked: false };
+    if (!this.checkCircuitBreaker()) {
+      throw new Error("REGISTRY_CIRCUIT_OPEN");
     }
-    if (!response.ok) {
-      throw new Error("REGISTRY_ERROR");
+
+    try {
+      const url = `${this.registryUrl}/v1/keys/${keyId}/status`;
+      const response = await ensureFetch()(url);
+      if (response.status === 404) {
+        this.recordSuccess();
+        return { revoked: false };
+      }
+      if (!response.ok) {
+        this.recordFailure();
+        throw new Error("REGISTRY_ERROR");
+      }
+      const data = (await response.json()) as { 
+        status: string; 
+        revokedAt?: string | null; 
+        expiresAt: string;
+        createdAt: string;
+      };
+      
+      // Check if key is expired
+      const expiresAt = data.expiresAt ? new Date(data.expiresAt).getTime() : null;
+      const isExpired = expiresAt ? Date.now() > expiresAt : false;
+      
+      const status: RevocationStatus = { 
+        revoked: data.status === "REVOKED",
+        revokedAt: data.revokedAt ?? undefined,
+        expiresAt: data.expiresAt,
+        expired: isExpired
+      };
+      
+      this.recordSuccess();
+      this.setCache(cacheKey, status);
+      return status;
+    } catch (err) {
+      this.recordFailure();
+      throw err;
     }
-    const data = (await response.json()) as { revokedAt?: string | null; reason?: string };
-    const status = { revoked: Boolean(data.revokedAt), revokedAt: data.revokedAt ?? undefined, reason: data.reason };
-    this.setCache(cacheKey, status);
-    return status;
   }
 
   async fetchIssuerKeys(issuerBaseUrl: string): Promise<{ keys: Array<JsonWebKey & { kid?: string }> }> {

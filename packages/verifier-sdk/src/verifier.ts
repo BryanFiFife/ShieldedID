@@ -168,6 +168,12 @@ function isNotExpired(expiresAt: string): boolean {
 export class ShieldedVerifier {
   private readonly origin: string;
   private readonly registryClient: RegistryClient;
+  // SECURITY FIX #4D: Performance monitoring metrics
+  private readonly metrics = {
+    verificationTimes: [] as number[],
+    registryCallTimes: [] as number[],
+    zkVerificationTimes: [] as number[]
+  };
 
   constructor(config: VerifierConfig) {
     this.origin = config.origin;
@@ -217,9 +223,13 @@ export class ShieldedVerifier {
     proofResponse: ProofResponse,
     options: VerificationOptions = { checkRevocation: true }
   ): Promise<VerificationResult> {
+    // SECURITY FIX #4D: Track verification performance
+    const verificationStart = performance.now();
     const verifiedAt = nowIso();
 
     if (!validateTimestamp(request.issuedAt, request.expiresAt, request.policy.maxAgeSeconds)) {
+      // SECURITY FIX #5A: Record metric even on early exit
+      this.metrics.verificationTimes.push(performance.now() - verificationStart);
       return { valid: false, reason: "REQUEST_EXPIRED", verifiedAt };
     }
 
@@ -259,8 +269,13 @@ export class ShieldedVerifier {
     // Handle ZK proof verification
     if ((proofResponse.suite === "AGE_ZK_BULLETPROOFS_V1" && proofResponse.zkProof) ||
         (proofResponse.suite === "KYC_ZK_BULLETPROOFS_V1" && proofResponse.kycZkProof)) {
+      // SECURITY FIX #5A: Track ZK verification timing
+      const zkStart = performance.now();
       const zkValid = await this.verifyZkProof(request, proofResponse);
+      this.metrics.zkVerificationTimes.push(performance.now() - zkStart);
+      
       if (!zkValid) {
+        this.metrics.verificationTimes.push(performance.now() - verificationStart);
         return { valid: false, reason: "ZK_PROOF_INVALID", verifiedAt };
       }
     }
@@ -299,11 +314,24 @@ export class ShieldedVerifier {
     if (request.policy.requireStatusCheck || options.checkRevocation) {
       const keyId = proofResponse.keyId;
       if (!keyId) {
+        // SECURITY FIX #5A: Record metric on early exit
+        this.metrics.verificationTimes.push(performance.now() - verificationStart);
         return { valid: false, reason: "KEY_ID_REQUIRED", verifiedAt };
       }
-      const status = await this.registryClient.getKeyStatus(keyId);
+      // SECURITY FIX #4A: Use new dedicated key-specific endpoint
+      // SECURITY FIX #5A: Track registry call timing
+      const registryStart = performance.now();
+      const status = await this.registryClient.getKeyStatusViaNewEndpoint(keyId);
+      this.metrics.registryCallTimes.push(performance.now() - registryStart);
+      
       if (status.revoked) {
+        this.metrics.verificationTimes.push(performance.now() - verificationStart);
         return { valid: false, reason: "KEY_REVOKED", details: status as unknown as Record<string, unknown>, verifiedAt };
+      }
+      // SECURITY FIX #2: Enforce key expiration
+      if (status.expired) {
+        this.metrics.verificationTimes.push(performance.now() - verificationStart);
+        return { valid: false, reason: "KEY_EXPIRED", details: status as unknown as Record<string, unknown>, verifiedAt };
       }
     }
 
@@ -330,6 +358,9 @@ export class ShieldedVerifier {
       }
     }
 
+    // SECURITY FIX #5A: Record verification timing on success
+    this.metrics.verificationTimes.push(performance.now() - verificationStart);
+    
     return {
       valid: true,
       pairwiseSubjectId: proofResponse.pairwiseSubjectId,
@@ -340,21 +371,50 @@ export class ShieldedVerifier {
 
   /** Check revocation status for a key via the registry. */
   async checkRevocation(keyId: string) {
-    return this.registryClient.getKeyStatus(keyId);
+    // SECURITY FIX #4A: Use new dedicated key-specific endpoint
+    return this.registryClient.getKeyStatusViaNewEndpoint(keyId);
   }
+
+  /** Get performance metrics (SECURITY FIX #4D) */
+  getMetrics() {
+    const avgVerification = this.metrics.verificationTimes.length 
+      ? this.metrics.verificationTimes.reduce((a, b) => a + b, 0) / this.metrics.verificationTimes.length 
+      : 0;
+    const avgRegistry = this.metrics.registryCallTimes.length 
+      ? this.metrics.registryCallTimes.reduce((a, b) => a + b, 0) / this.metrics.registryCallTimes.length 
+      : 0;
+    const avgZkVerif = this.metrics.zkVerificationTimes.length 
+      ? this.metrics.zkVerificationTimes.reduce((a, b) => a + b, 0) / this.metrics.zkVerificationTimes.length 
+      : 0;
+
+    return {
+      verificationCount: this.metrics.verificationTimes.length,
+      avgVerificationMs: Math.round(avgVerification * 100) / 100,
+      registryCallCount: this.metrics.registryCallTimes.length,
+      avgRegistryCallMs: Math.round(avgRegistry * 100) / 100,
+      zkVerificationCount: this.metrics.zkVerificationTimes.length,
+      avgZkVerificationMs: Math.round(avgZkVerif * 100) / 100
+    };
+  }
+
 
   /** Verify ZK proof for age or KYC verification. */
   private async verifyZkProof(request: ProofRequest, proofResponse: ProofResponse): Promise<boolean> {
     try {
       if (proofResponse.suite === "AGE_ZK_BULLETPROOFS_V1" && proofResponse.zkProof) {
         // Age ZK proof verification using Bulletproofs
+        // SECURITY FIX #2: Use actual threshold from request instead of hardcoded 18
+        const ageThreshold = request.requestedClaims
+          .find(c => c.type === "AGE_OVER")
+          ?.threshold ?? 18; // Fallback to 18 if not specified
+
         return await verifyGE(
           {
             commitment: proofResponse.zkProof.commitment,
             proof: proofResponse.zkProof.bulletproof,
             publicInputs: proofResponse.zkProof.publicInputs
           },
-          18, // Age threshold
+          ageThreshold,
           request.verifierOrigin,
           request.nonce,
           request.expiresAt

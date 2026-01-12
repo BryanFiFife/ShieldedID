@@ -6,8 +6,9 @@ import { ShieldedVerifier } from "../src/verifier.js";
 import { canonicalPayload } from "../src/crypto.js";
 import { proveGE, verifyGE as wasmVerifyGE } from "@shielded-id/age-zk";
 
-// Set ZK_E2E=1 to run (loads WASM + real crypto); skipped by default for speed
-const describeIfZk = process.env.ZK_E2E === "1" ? describe : describe.skip;
+// SECURITY FIX #4E: Enable real ZK tests by default (not just with ZK_E2E=1)
+// This ensures WASM module loads and real Bulletproofs verification is tested in CI
+const describeIfZk = describe; // Always run, don't skip
 
 const VERIFIER_ORIGIN = "https://verifier.example";
 const REGISTRY_URL = "https://registry.example";

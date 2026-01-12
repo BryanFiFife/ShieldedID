@@ -3,8 +3,15 @@
   "version": "0.1.0",
   "description": "Zero-knowledge age proof WASM module",
   "license": "Apache-2.0",
-  "main": "pkg/index.ts",
-  "types": "pkg/index.d.ts",
+  "main": "./pkg/index.js",
+  "types": "./pkg/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./pkg/index.js",
+      "require": "./pkg/index.js",
+      "types": "./pkg/index.d.ts"
+    }
+  },
   "scripts": {
     "build": "wasm-pack build --target web --out-dir pkg",
     "build:node": "wasm-pack build --target nodejs --out-dir pkg",

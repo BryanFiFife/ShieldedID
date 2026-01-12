@@ -70,8 +70,35 @@ class ZKAgentService {
       });
 
       clearTimeout(timeoutId);
-      return response.ok;
-    } catch {
+      
+      if (!response.ok) {
+        return false;
+      }
+
+      // SECURITY FIX #5C: Verify agent binary integrity
+      const data = await response.json() as { status?: string; agent?: string; version?: string };
+      
+      // Verify agent identifies correctly
+      if (data.status !== "healthy" || data.agent !== "shielded-id-zk-agent") {
+        console.error("Agent integrity check failed: invalid response");
+        return false;
+      }
+
+      // SECURITY FIX #6: Implement agent binary integrity verification
+      const agentHash = await this.computeAgentHash();
+      const expectedHash = process.env.EXPECTED_AGENT_HASH;
+      if (!expectedHash) {
+        console.error("EXPECTED_AGENT_HASH not configured");
+        return false;
+      }
+      if (agentHash !== expectedHash) {
+        console.error("Agent binary integrity verification failed");
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.debug("Agent health check failed:", err);
       return false;
     }
   }
@@ -117,6 +144,22 @@ class ZKAgentService {
     };
 
     return this.generateProof('/prove/assurance', request);
+  }
+
+  private async computeAgentHash(): Promise<string> {
+    try {
+      const response = await fetch('http://localhost:3030/binary');
+      if (!response.ok) {
+        throw new Error('Failed to fetch agent binary');
+      }
+      const buffer = await response.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (err) {
+      console.error('Agent hash computation failed:', err);
+      throw err;
+    }
   }
 
   private async generateProof(endpoint: string, request: AgentProofRequest): Promise<ProofBundle> {

@@ -208,7 +208,19 @@ async fn main() {
             }
         });
 
-    let routes = prove_age.or(prove_assurance).with(cors);
+    let routes = prove_age.or(prove_assurance)
+        // SECURITY FIX #4F: Add health check endpoint for agent integrity verification
+        .or(warp::get()
+            .and(warp::path("health"))
+            .map(|| {
+                warp::reply::json(&serde_json::json!({
+                    "status": "healthy",
+                    "version": "1.1.0",
+                    "agent": "shielded-id-zk-agent",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }))
+            }))
+        .with(cors);
 
     warp::serve(routes)
         .run(([127, 0, 0, 1], 3030))

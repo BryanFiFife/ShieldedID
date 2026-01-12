@@ -19,6 +19,18 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// SECURITY FIX #5: Key lifecycle management constants
+const MAX_KEY_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000; // 1 year
+const RECOMMENDED_ROTATION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
+function getKeyExpiresAt(): string {
+  return new Date(Date.now() + MAX_KEY_LIFETIME_MS).toISOString();
+}
+
+function getRotationReminderAt(): string {
+  return new Date(Date.now() + RECOMMENDED_ROTATION_MS).toISOString();
+}
+
 export async function registerWalletRoutes(app: FastifyInstance) {
   app.post(
     "/v1/wallet/register",
@@ -103,6 +115,10 @@ export async function registerWalletRoutes(app: FastifyInstance) {
 
       const signatureHash = await assertNotReplayed(null, payload, signature);
 
+      // SECURITY FIX #5: Log key expiration details in audit metadata
+      const expiresAt = getKeyExpiresAt();
+      const rotationReminderAt = getRotationReminderAt();
+
       const tx = db.transaction(() => {
         insertWallet.run(walletId, createdAt, suiteVersion, "ACTIVE");
         insertKey.run(
@@ -116,7 +132,12 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         insertAudit.run(
           "WALLET_REGISTERED",
           walletId,
-          JSON.stringify({ signature_hash: signatureHash, key_id: keyId }),
+          JSON.stringify({ 
+            signature_hash: signatureHash, 
+            key_id: keyId,
+            expires_at: expiresAt,
+            rotation_reminder_at: rotationReminderAt
+          }),
           createdAt
         );
       });
@@ -222,6 +243,10 @@ export async function registerWalletRoutes(app: FastifyInstance) {
 
       const keyId = randomUUID();
       const createdAt = nowIso();
+      // SECURITY FIX #5: Log key expiration details in audit metadata
+      const expiresAt = getKeyExpiresAt();
+      const rotationReminderAt = getRotationReminderAt();
+
       const insertKey = db.prepare(
         "INSERT INTO wallet_keys (key_id, wallet_id, key_type, key_material, created_at) VALUES (?, ?, ?, ?, ?)"
       );
@@ -252,7 +277,12 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         insertAudit.run(
           "KEY_ADDED",
           walletId,
-          JSON.stringify({ signature_hash: signatureHash, key_id: keyId }),
+          JSON.stringify({ 
+            signature_hash: signatureHash, 
+            key_id: keyId,
+            expires_at: expiresAt,
+            rotation_reminder_at: rotationReminderAt
+          }),
           createdAt
         );
       });
