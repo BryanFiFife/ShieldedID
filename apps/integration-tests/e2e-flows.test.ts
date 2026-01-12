@@ -26,7 +26,7 @@ async function setupTestEnvironment() {
 // ============================================================
 
 test.describe("Shielded ID E2E Flows", () => {
-  const env = setupTestEnvironment();
+  let env: Awaited<ReturnType<typeof setupTestEnvironment>>;
 
   // ============================================================
   // Test 1: Complete Happy Path
@@ -39,7 +39,7 @@ test.describe("Shielded ID E2E Flows", () => {
     // ============================================================
     // Phase 1: Wallet Enrollment
     // ============================================================
-
+    env = await setupTestEnvironment();
     await page.goto(env.walletURL);
     await expect(page.locator("text=Welcome to Shielded ID")).toBeVisible();
 
@@ -220,7 +220,7 @@ test.describe("Shielded ID E2E Flows", () => {
     // Prerequisite: Pre-cache keys
     await page.evaluate(() => {
       // Simulate offline mode
-      window.offlineModeEnabled = true;
+      (window as any).offlineModeEnabled = true;
     });
 
     // Disable network
@@ -229,7 +229,7 @@ test.describe("Shielded ID E2E Flows", () => {
     // Attempt verification with cached keys
     // Should succeed because cache is fresh
     const result = await page.evaluate(async () => {
-      const verifier = window.offlineVerifier; // Pre-initialized in app
+      const verifier = (window as any).offlineVerifier; // Pre-initialized in app
       return await verifier.verifyProof({
         keyId: "key-123",
         signature: "cached-valid-sig",
@@ -275,8 +275,8 @@ test.describe("Shielded ID E2E Flows", () => {
     await deviceB.goto(env.verifierURL);
 
     // Try to reuse same session ID
-    await deviceB.evaluate((id) => {
-      sessionStorage.setItem("session_id", id);
+    await deviceB.evaluate((id: string | null) => {
+      sessionStorage.setItem("session_id", id ?? "");
     }, sessionId);
 
     // Session should be invalidated (device mismatch)
@@ -300,7 +300,8 @@ test.describe("Shielded ID E2E Flows", () => {
     // ... (enrollment and proof generation)
 
     const proofData = await page.evaluate(() => {
-      return JSON.parse(sessionStorage.getItem("last_proof"));
+      const stored = sessionStorage.getItem("last_proof");
+      return stored ? JSON.parse(stored) : null;
     });
 
     // Attempt to reuse proof with same nonce
@@ -314,7 +315,7 @@ test.describe("Shielded ID E2E Flows", () => {
 
         return result;
       } catch (e) {
-        return { error: e.message };
+        return { error: e instanceof Error ? e.message : String(e) };
       }
     }, proofData);
 
@@ -437,7 +438,8 @@ async function enrollWallet(page: Page, data?: any): Promise<string> {
 
   const info = { ...defaults, ...data };
 
-  await page.goto(setupTestEnvironment().walletURL);
+  const testEnv = await setupTestEnvironment();
+  await page.goto(testEnv.walletURL);
   await page.click("text=Create New Wallet");
 
   await page.fill("[data-testid=passphrase-input]", info.passphrase);
