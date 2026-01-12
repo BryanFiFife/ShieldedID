@@ -1,5 +1,51 @@
-/** Supported claim types for Phase 1. */
-export type ClaimType = "AGE_OVER" | "KYC_LEVEL" | "CONTINUITY" | "CUSTOM";
+/** Comprehensive claim types supporting 22 global predicates (Phase 1). */
+export type ClaimType = 
+  // Age Verification (4 types)
+  | "AGE_OVER"
+  | "AGE_RANGE"
+  | "BORN_AFTER"
+  | "AGE_EXACT"
+  
+  // Location Verification (5 types)
+  | "COUNTRY"
+  | "EU_RESIDENT"
+  | "STATE_OR_PROVINCE"
+  | "POSTAL_CODE_PREFIX"
+  | "REGION"
+  
+  // KYC Verification (5 types)
+  | "KYC_LEVEL"
+  | "KYC_VERIFIED"
+  | "AML_CLEAR"
+  | "SANCTIONS_CLEAR"
+  | "DOCUMENT_TYPE"
+  
+  // Driving License (5 types)
+  | "LICENSE_CLASS"
+  | "VEHICLE_CATEGORY"
+  | "ENDORSEMENT"
+  | "RESTRICTION"
+  | "LICENSE_VALID"
+  
+  // Documents & Credentials (4 types)
+  | "DOCUMENT_VALID"
+  | "DOCUMENT_TYPE_MATCH"
+  | "ISSUER_COUNTRY"
+  | "DOCUMENT_AGE"
+  | "CREDENTIAL_VALID"
+  | "CREDENTIAL_ACTIVE"
+  | "CREDENTIAL_LEVEL"
+  
+  | "CONTINUITY"
+  | "CUSTOM";
+
+/** Predicate operators for flexible proof requests */
+export type PredicateOperator = 
+  | "GE"          // >= (range proofs, threshold)
+  | "EQ"          // == (equality)
+  | "IN"          // membership in set (EU_RESIDENT)
+  | "NOT_IN"      // NOT in set (restrictions)
+  | "STARTS_WITH"; // prefix match (postal codes)
 
 /** Verifier proof request sent to wallets. */
 export interface ProofRequest {
@@ -13,11 +59,36 @@ export interface ProofRequest {
   callback: ProofCallback;
 }
 
-/** Requested claim constraints. */
+/** Requested claim constraints with comprehensive predicate support. */
 export interface RequestedClaim {
   type: ClaimType;
+  operator?: PredicateOperator;  // Default: "GE" for range proofs
+  
+  // For range proofs (AGE_OVER, AGE_RANGE, KYC_LEVEL, LICENSE_CLASS, CREDENTIAL_LEVEL)
   threshold?: number;
   minLevel?: number;
+  minValue?: number;
+  maxValue?: number;
+  
+  // For equality/membership/string proofs
+  expectedValue?: string | number;
+  expectedCountry?: string;
+  expectedState?: string;
+  expectedProvince?: string;
+  requiredEndorsement?: string;
+  forbiddenRestriction?: string;
+  allowedDocumentType?: string;
+  
+  // For prefix matching (POSTAL_CODE_PREFIX)
+  prefixLength?: number;
+  
+  // For credential validation
+  credentialType?: string;
+  issuerDid?: string;
+  
+  // For document validation
+  minDocumentAge?: number;  // timestamp or days
+  issuerCountry?: string;
 }
 
 /** Policy enforcing status checks and freshness. */
@@ -34,7 +105,7 @@ export interface ProofCallback {
   timeout?: number;
 }
 
-/** Proof response returned by a wallet. */
+/** Proof response returned by a wallet with comprehensive proof support. */
 export interface ProofResponse {
   requestId: string;
   nonce: string;
@@ -42,27 +113,32 @@ export interface ProofResponse {
   keyId?: string;
   pairwiseSubjectId: string;
   claims: Claim[];
-  suite: string;
+  suite: ProofSuite;
   signature: string;
-  // ZK proof fields for age verification
-  zkProof?: {
-    commitment: string;    // base64
-    bulletproof: string;   // base64
-    publicInputs: string;  // base64
-  };
-  // ZK proof fields for KYC verification
-  kycZkProof?: {
-    commitment: string;    // base64
-    bulletproof: string;   // base64
-    publicInputs: string;  // base64
-    minLevel: number;
+  // Multiple ZK proofs indexed by claim index
+  zkProofs?: {
+    [claimIndex: number]: {
+      commitment: string;      // base64
+      bulletproof: string;     // base64
+      publicInputs: string;    // base64
+      claimType: ClaimType;
+      operator: PredicateOperator;
+    };
   };
 }
 
-/** Individual claim in a proof response. */
+export type ProofSuite = 
+  | "ECDSA_P256_SHA256_1.0.0"
+  | "BULLETPROOFS_RISTRETTO_V1"
+  | "COMPOSITE_BULLETPROOFS_V1"
+  | "AGE_ZK_BULLETPROOFS_V1"
+  | "KYC_ZK_BULLETPROOFS_V1";
+
+/** Individual claim in a proof response with operator info. */
 export interface Claim {
   type: ClaimType;
-  value: boolean | number;
+  value: boolean | number | string;
+  operator?: PredicateOperator;
   issuer?: {
     did: string;
     keyId?: string;

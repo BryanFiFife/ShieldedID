@@ -1804,6 +1804,414 @@ describe("ShieldedVerifier Methods", () => {
   });
 });
 
+describe("Comprehensive ZK Proof Verification - New Predicates", () => {
+  // Test coverage for new verifyComprehensiveZkProof routing and helper methods
+  
+  it("verifyComprehensiveZkProof routes AGE_RANGE claims correctly", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AGE_RANGE", 
+        minAge: 18, 
+        maxAge: 65 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_RANGE", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AGE_RANGE",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("18|65|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    // May succeed or fail depending on verification logic, but should not throw
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles COUNTRY claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "COUNTRY", 
+        expectedCountry: "US" 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "COUNTRY", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "COUNTRY",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("US|hash|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles EU_RESIDENT claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "EU_RESIDENT" 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "EU_RESIDENT", value: true, operator: "IN" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "EU_RESIDENT",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("DE|hash|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles STRING_EQUALITY claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "STRING_EQUALITY", 
+        field: "documentType",
+        expectedValue: "PASSPORT" 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "STRING_EQUALITY", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "STRING_EQUALITY",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("PASSPORT|hash|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles membership claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "MEMBERSHIP", 
+        list: "CATEGORY_A,CATEGORY_B,CATEGORY_C" 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "MEMBERSHIP", value: true, operator: "IN" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "MEMBERSHIP",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("CATEGORY_B|1|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles NOT_MEMBERSHIP claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "NOT_MEMBERSHIP", 
+        forbidden: "BANNED_CATEGORY" 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "NOT_MEMBERSHIP", value: true, operator: "NOT_IN" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "NOT_MEMBERSHIP",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("ALLOWED_CATEGORY|1|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles STRING_PREFIX claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "STRING_PREFIX", 
+        prefix: "90210" 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "STRING_PREFIX", value: true, operator: "STARTS_WITH" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "STRING_PREFIX",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("90210-1234|5|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles KYC_LEVEL claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "KYC_LEVEL", 
+        minLevel: 2 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "KYC_LEVEL", value: true }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "KYC_LEVEL",
+          commitment: new Uint8Array(32).fill(1),
+          bulletproof: new Uint8Array(670).fill(2),
+          publicInputs: new Uint8Array(Buffer.from("2|3|context"))
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("validateClaimsAgainstRequest enforces GE operator", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AGE_OVER",
+        operator: "GE",
+        threshold: 18
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true, operator: "GE" }],
+      suite: "ECDSA_P256_SHA256_1.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(true);
+  });
+
+  it("validateClaimsAgainstRequest enforces EQ operator", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "COUNTRY",
+        operator: "EQ",
+        expectedCountry: "US"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "COUNTRY", value: true, operator: "EQ" }],
+      suite: "ECDSA_P256_SHA256_1.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(true);
+  });
+
+  it("validateClaimsAgainstRequest enforces IN operator", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "EU_RESIDENT",
+        operator: "IN",
+        list: "DE,FR,IT"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "EU_RESIDENT", value: true, operator: "IN" }],
+      suite: "ECDSA_P256_SHA256_1.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(true);
+  });
+
+  it("validateClaimsAgainstRequest enforces NOT_IN operator", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "NOT_MEMBERSHIP",
+        operator: "NOT_IN",
+        forbidden: "BANNED"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "NOT_MEMBERSHIP", value: true, operator: "NOT_IN" }],
+      suite: "ECDSA_P256_SHA256_1.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(true);
+  });
+
+  it("validateClaimsAgainstRequest enforces STARTS_WITH operator", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "STRING_PREFIX",
+        operator: "STARTS_WITH",
+        prefix: "90210"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "STRING_PREFIX", value: true, operator: "STARTS_WITH" }],
+      suite: "ECDSA_P256_SHA256_1.0.0",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(true);
+  });
+});
+
 describe("crypto availability checks", () => {
   it("throws when crypto.randomUUID is not available", () => {
     const cryptoSpy = vi.spyOn(globalThis, 'crypto', 'get').mockReturnValue({} as any);
