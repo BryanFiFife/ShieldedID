@@ -176,4 +176,80 @@ describe("status routes", () => {
     expect(revokedKey.status).toBe("REVOKED");
     expect(revokedKey.revokedAt).toBeTruthy();
   });
+
+  it("handles invalid wallet id format", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/v1/status/invalid-id"
+    });
+    // Invalid format should either 400 or 404
+    expect([400, 404]).toContain(res.statusCode);
+  });
+
+  it("health check has valid timestamp", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/health"
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const timestamp = new Date(body.timestamp);
+    expect(timestamp).toBeInstanceOf(Date);
+    expect(timestamp.getTime()).toBeGreaterThan(0);
+  });
+
+  it("status includes cache headers for key lookups", async () => {
+    const { jwk: signingJwk, privateKey } = await generateKeyPair();
+    const registerPayload = {
+      action: "WALLET_REGISTER",
+      publicKeys: { signing: signingJwk },
+      webauthnCredentialId: Buffer.from("cred").toString("base64"),
+      suiteVersion: "1.0"
+    };
+    const registerSignature = await signPayload(privateKey, registerPayload);
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/register",
+      payload: { ...registerPayload, signature: registerSignature }
+    });
+    const registerBody = registerRes.json();
+    const walletId = registerBody.walletId;
+
+    // Get status and check for cache headers
+    const statusRes = await app.inject({
+      method: "GET",
+      url: `/v1/status/${walletId}`
+    });
+    expect(statusRes.statusCode).toBe(200);
+    const cacheControl = statusRes.headers["cache-control"];
+    expect(cacheControl).toBeDefined();
+  });
+
+  it("status response includes expiresAt for keys", async () => {
+    const { jwk: signingJwk, privateKey } = await generateKeyPair();
+    const registerPayload = {
+      action: "WALLET_REGISTER",
+      publicKeys: { signing: signingJwk },
+      webauthnCredentialId: Buffer.from("cred").toString("base64"),
+      suiteVersion: "1.0"
+    };
+    const registerSignature = await signPayload(privateKey, registerPayload);
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/register",
+      payload: { ...registerPayload, signature: registerSignature }
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const walletId = registerRes.json().walletId;
+
+    const statusRes = await app.inject({
+      method: "GET",
+      url: `/v1/status/${walletId}`
+    });
+    expect(statusRes.statusCode).toBe(200);
+    const body = statusRes.json();
+    expect(body.keys[0]).toHaveProperty("expiresAt");
+  });
 });

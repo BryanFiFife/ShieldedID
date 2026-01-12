@@ -237,6 +237,45 @@ describe("proof generator", () => {
     expect(response.claims).toBeInstanceOf(Array);
   });
 
+  it("handles multiple requested claims", async () => {
+    vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(false);
+
+    const passphrase = "strong-passphrase";
+    const signingKey = await createSigningKey(passphrase);
+
+    const vault = {
+      ...createEmptyVault(),
+      masterSecret: b64(crypto.getRandomValues(new Uint8Array(32))),
+      signingKeyEncrypted: b64(signingKey.encryptedPrivateKey),
+      webauthnCredentialId: undefined,
+      kycLevel: 2,
+      profile: {
+        givenName: "BOB",
+        familyName: "SMITH",
+        dateOfBirth: "1985-06-20",
+        documentType: "ID",
+        issuer: "USA",
+        issuedDate: "2020-01-01",
+        expiryDate: "2030-01-01"
+      }
+    };
+
+    const request = {
+      requestId: "req-2",
+      nonce: "nonce-2",
+      verifierOrigin: "https://store.example",
+      requestedClaims: [
+        { type: "AGE_OVER" },
+        { type: "KYC_LEVEL", minLevel: 1 },
+        { type: "CONTINUITY" }
+      ]
+    };
+
+    const response = await generateProof(request, vault, { walletId: "wallet-2", passphrase });
+    expect(response.signature).toBeTruthy();
+    expect(response.claims).toBeInstanceOf(Array);
+  });
+
   it("validates request with no claims", async () => {
     vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(false);
 
@@ -269,5 +308,118 @@ describe("proof generator", () => {
     const response = await generateProof(request, vault, { walletId: "wallet-3", passphrase });
     expect(response.signature).toBeTruthy();
     expect(response.claims).toBeInstanceOf(Array);
+  });
+
+  it("generates different proofs for same wallet with different nonces", async () => {
+    vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(false);
+
+    const passphrase = "strong-passphrase";
+    const signingKey = await createSigningKey(passphrase);
+
+    const vault = {
+      ...createEmptyVault(),
+      masterSecret: b64(crypto.getRandomValues(new Uint8Array(32))),
+      signingKeyEncrypted: b64(signingKey.encryptedPrivateKey),
+      webauthnCredentialId: undefined,
+      profile: {
+        givenName: "DAVE",
+        familyName: "JONES",
+        dateOfBirth: "1990-01-01",
+        documentType: "ID",
+        issuer: "USA",
+        issuedDate: "2020-01-01",
+        expiryDate: "2030-01-01"
+      }
+    };
+
+    const request1 = {
+      requestId: "req-4a",
+      nonce: "nonce-4a",
+      verifierOrigin: "https://shop.example",
+      requestedClaims: [{ type: "AGE_OVER" }]
+    };
+
+    const request2 = {
+      requestId: "req-4b",
+      nonce: "nonce-4b",
+      verifierOrigin: "https://shop.example",
+      requestedClaims: [{ type: "AGE_OVER" }]
+    };
+
+    const response1 = await generateProof(request1, vault, { walletId: "wallet-4", passphrase });
+    const response2 = await generateProof(request2, vault, { walletId: "wallet-4", passphrase });
+
+    // Signatures should be different due to different nonces
+    expect(response1.signature).not.toBe(response2.signature);
+  });
+
+  it("includes pairwise subject id in response", async () => {
+    vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(false);
+
+    const passphrase = "strong-passphrase";
+    const signingKey = await createSigningKey(passphrase);
+
+    const vault = {
+      ...createEmptyVault(),
+      masterSecret: b64(crypto.getRandomValues(new Uint8Array(32))),
+      signingKeyEncrypted: b64(signingKey.encryptedPrivateKey),
+      webauthnCredentialId: undefined,
+      profile: {
+        givenName: "EVE",
+        familyName: "WILLIAMS",
+        dateOfBirth: "1992-05-10",
+        documentType: "ID",
+        issuer: "USA",
+        issuedDate: "2020-01-01",
+        expiryDate: "2030-01-01"
+      }
+    };
+
+    const request = {
+      requestId: "req-5",
+      nonce: "nonce-5",
+      verifierOrigin: "https://app.example",
+      requestedClaims: [{ type: "CONTINUITY" }]
+    };
+
+    const response = await generateProof(request, vault, { walletId: "wallet-5", passphrase });
+    
+    expect(response.pairwiseSubjectId).toBeTruthy();
+    expect(typeof response.pairwiseSubjectId).toBe("string");
+  });
+
+  it("handles continuity claim type correctly", async () => {
+    vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(false);
+
+    const passphrase = "strong-passphrase";
+    const signingKey = await createSigningKey(passphrase);
+
+    const vault = {
+      ...createEmptyVault(),
+      masterSecret: b64(crypto.getRandomValues(new Uint8Array(32))),
+      signingKeyEncrypted: b64(signingKey.encryptedPrivateKey),
+      webauthnCredentialId: undefined,
+      profile: {
+        givenName: "FRANK",
+        familyName: "MILLER",
+        dateOfBirth: "1988-12-15",
+        documentType: "ID",
+        issuer: "USA",
+        issuedDate: "2020-01-01",
+        expiryDate: "2030-01-01"
+      }
+    };
+
+    const request = {
+      requestId: "req-6",
+      nonce: "nonce-6",
+      verifierOrigin: "https://verify.example",
+      requestedClaims: [{ type: "CONTINUITY" }]
+    };
+
+    const response = await generateProof(request, vault, { walletId: "wallet-6", passphrase });
+    
+    const continuityClaim = response.claims?.find((c: any) => c.type === "CONTINUITY");
+    expect(continuityClaim).toBeTruthy();
   });
 });

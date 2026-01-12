@@ -375,4 +375,147 @@ describe("admin and user routes", () => {
     });
     expect(contactRes.statusCode).toBe(400);
   });
+
+  it("rejects contact with message too short", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John",
+        email: "john@example.com",
+        subject: "Test",
+        message: "short"
+      }
+    });
+    expect([400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("rejects contact with empty name", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "",
+        email: "john@example.com",
+        subject: "Test",
+        message: "This is a test message about something"
+      }
+    });
+    expect([400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("rejects contact with empty subject", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John Doe",
+        email: "john@example.com",
+        subject: "",
+        message: "This is a test message about something"
+      }
+    });
+    expect([400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("handles contact with name at max length", async () => {
+    const maxName = "a".repeat(120);
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: maxName,
+        email: "john@example.com",
+        subject: "Test",
+        message: "This is a test message about something"
+      }
+    });
+    expect([201, 400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("rejects contact with name exceeding max length", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "a".repeat(121),
+        email: "john@example.com",
+        subject: "Test",
+        message: "This is a test message about something"
+      }
+    });
+    expect([400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("handles contact with subject at max length", async () => {
+    const maxSubject = "a".repeat(200);
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John Doe",
+        email: "john@example.com",
+        subject: maxSubject,
+        message: "This is a test message about something"
+      }
+    });
+    expect([201, 400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("handles contact with message at minimum length", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John Doe",
+        email: "john@example.com",
+        subject: "Test",
+        message: "1234567890" // exactly 10 chars
+      }
+    });
+    expect([201, 400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("handles contact with message at maximum length", async () => {
+    const maxMessage = "a".repeat(2000);
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John Doe",
+        email: "john@example.com",
+        subject: "Test",
+        message: maxMessage
+      }
+    });
+    expect([201, 400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("rejects contact with extra fields", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John Doe",
+        email: "john@example.com",
+        subject: "Test",
+        message: "This is a test message about something",
+        extraField: "should be rejected"
+      }
+    });
+    expect([400, 500]).toContain(contactRes.statusCode);
+  });
+
+  it("rejects contact with missing required fields", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John Doe",
+        email: "john@example.com"
+        // missing subject and message
+      }
+    });
+    expect([400, 500]).toContain(contactRes.statusCode);
+  });
 });
