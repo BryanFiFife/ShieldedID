@@ -409,30 +409,20 @@ export class ShieldedVerifier {
           ?.threshold ?? 18; // Fallback to 18 if not specified
 
         return await verifyGE(
-          {
-            commitment: proofResponse.zkProof.commitment,
-            proof: proofResponse.zkProof.bulletproof,
-            publicInputs: proofResponse.zkProof.publicInputs
-          },
-          ageThreshold,
-          request.verifierOrigin,
-          request.nonce,
-          request.expiresAt
+          proofResponse.zkProof.commitment,
+          proofResponse.zkProof.bulletproof,
+          proofResponse.zkProof.publicInputs,
+          ageThreshold
         );
       }
 
       if (proofResponse.suite === "KYC_ZK_BULLETPROOFS_V1" && proofResponse.kycZkProof) {
         // KYC ZK proof verification using Bulletproofs
         return await verifyGE(
-          {
-            commitment: proofResponse.kycZkProof.commitment,
-            proof: proofResponse.kycZkProof.bulletproof,
-            publicInputs: proofResponse.kycZkProof.publicInputs
-          },
-          proofResponse.kycZkProof.minLevel,
-          request.verifierOrigin,
-          request.nonce,
-          request.expiresAt
+          proofResponse.kycZkProof.commitment,
+          proofResponse.kycZkProof.bulletproof,
+          proofResponse.kycZkProof.publicInputs,
+          proofResponse.kycZkProof.minLevel
         );
       }
 

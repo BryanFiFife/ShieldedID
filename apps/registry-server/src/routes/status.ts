@@ -224,5 +224,3 @@ export async function registerStatusRoutes(app: FastifyInstance) {
     }
   );
 }
-
-```

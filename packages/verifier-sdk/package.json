@@ -4,19 +4,18 @@
   "description": "Shielded ID verifier SDK",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "dist/index.cjs",
+  "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
     }
   },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node ./scripts/build-cjs.js",
+    "build": "tsc -p tsconfig.json",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "prepare": "npm run build",

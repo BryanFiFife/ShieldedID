@@ -55,17 +55,7 @@ export async function registerSecurity(app: FastifyInstance, config: SecurityCon
     frameguard: { action: "deny" },
     xssFilter: false,
     noSniff: true,
-    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-    permissionsPolicy: {
-      accelerometer: [],
-      camera: [],
-      geolocation: [],
-      gyroscope: [],
-      magnetometer: [],
-      microphone: [],
-      payment: [],
-      usb: []
-    }
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" }
   });
 
   // ============================================================

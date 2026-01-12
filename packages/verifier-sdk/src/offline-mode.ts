@@ -39,6 +39,8 @@ export interface OfflineVerificationResult {
     cacheValid?: boolean;
     signatureValid?: boolean;
     revocationStatus?: string;
+    revokedAt?: string;
+    mode?: string;
   };
 }
 

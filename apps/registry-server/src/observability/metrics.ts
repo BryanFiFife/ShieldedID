@@ -141,7 +141,7 @@ export const forgedProofAttempts = new Counter({
   registers: [metricsRegistry]
 });
 
-export const csrf Prevention = new Counter({
+export const csrfPrevention = new Counter({
   name: "shielded_csrf_prevention_triggers_total",
   help: "CSRF prevention triggers (request ID mismatches)",
   registers: [metricsRegistry]
@@ -252,7 +252,7 @@ export function recordSecurityEvent(
       forgedProofAttempts.inc();
       break;
     case "csrf_prevention":
-      csrf Prevention.inc();
+      csrfPrevention.inc();
       break;
   }
 }

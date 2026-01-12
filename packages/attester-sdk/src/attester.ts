@@ -280,20 +280,23 @@ export class ShieldedAttester {
 }
 
 /**
+ * Attester information structure
+ */
+export interface AttesterInfo {
+  id: string;
+  name: string;
+  url: string;
+  publicKeyJWK: JsonWebKey;
+  status: "active" | "suspended" | "revoked";
+  registeredAt: Date;
+}
+
+/**
  * Attester Registry for multi-attester federation
  * (manages trust relationships)
  */
 export class AttesterRegistry {
   private attesters = new Map<string, AttesterInfo>();
-
-  interface AttesterInfo {
-    id: string;
-    name: string;
-    url: string;
-    publicKeyJWK: JsonWebKey;
-    status: "active" | "suspended" | "revoked";
-    registeredAt: Date;
-  }
 
   /**
    * Register a new attester in the federation

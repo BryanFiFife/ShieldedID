@@ -11,7 +11,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["vitest/globals", "@testing-library/jest-dom", "vite/client"]
+    "types": ["vitest/globals", "vite/client"]
   },
   "include": ["src", "tests"],
   "exclude": ["dist"]
