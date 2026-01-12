@@ -50,7 +50,7 @@ Shielded ID supports real zero-knowledge proofs via a native ZK agent using Bull
 
 ## 📊 Verifiable Test Results & Coverage
 
-### Test Suite Results (v1.4.0)
+### Test Suite Results (v1.3.0)
 | Component | Test Files | Tests Passed | Status |
 |-----------|------------|--------------|--------|
 | **Verifier SDK** | 12 files | 186 passed | ✅ All passing |

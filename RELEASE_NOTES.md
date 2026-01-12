@@ -1,9 +1,9 @@
-# ShieldedID v1.4.0 Release - Complete
+# ShieldedID v1.3.0 Release - Complete
 
 ## ✅ Release Successfully Pushed to GitHub
 
 **Repository**: https://github.com/BryanFiFife/ShieldedID  
-**Release Tag**: v1.4.0  
+**Release Tag**: v1.3.0  
 **Date**: January 12, 2026
 
 ---
@@ -45,7 +45,7 @@ All version numbers updated from 1.2.0 → 1.4.0:
 
 ---
 
-## 🔧 Key Changes in v1.4.0
+## 🔧 Key Changes in v1.3.0
 
 ### Security Hardening
 ✅ Enhanced CONTINUITY claim validation with comprehensive type checking  
@@ -67,7 +67,7 @@ All version numbers updated from 1.2.0 → 1.4.0:
 
 ## 🚀 Production Ready
 
-ShieldedID v1.4.0 is **production-ready** for:
+ShieldedID v1.3.0 is **production-ready** for:
 - Real-money zero-knowledge identity verification
 - Minimal-disclosure age and KYC proofs
 - Privacy-preserving credential verification
@@ -93,7 +93,7 @@ ShieldedID v1.4.0 is **production-ready** for:
 ## 📖 Documentation Structure
 
 ```
-ShieldedID v1.4.0
+ShieldedID v1.3.0
 ├── README.md                    (Start here)
 ├── SECURITY.md                  (Security details)
 ├── CHANGELOG.md                 (Release history)
@@ -112,7 +112,7 @@ ShieldedID v1.4.0
 ## 🎯 Next Steps
 
 1. **Download/Clone**: `git clone https://github.com/BryanFiFife/ShieldedID.git`
-2. **Checkout Release**: `git checkout v1.4.0`
+2. **Checkout Release**: `git checkout v1.3.0`
 3. **Install Dependencies**: `pnpm install`
 4. **Build**: `pnpm build`
 5. **Deploy**: Follow instructions in README.md
