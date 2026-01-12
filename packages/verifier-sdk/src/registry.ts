@@ -182,4 +182,11 @@ export class RegistryClient {
     this.setCache(cacheKey, data);
     return data;
   }
+
+  // Test-only method to reset circuit breaker state
+  resetCircuitBreaker(): void {
+    this.circuitBreaker.failures = 0;
+    this.circuitBreaker.lastFailureTime = 0;
+    this.cache.clear();
+  }
 }

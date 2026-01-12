@@ -9,7 +9,7 @@ vi.mock('@shielded-id/age-zk', () => ({
     proof: 'mock-proof', 
     publicInputs: 'mock-inputs'
   }),
-  verifyGE: vi.fn().mockResolvedValue(true)
+  verifyGE: vi.fn().mockImplementation(async () => true)
 }));
 
 // Mock the crypto functions to avoid signature verification issues
@@ -29,9 +29,15 @@ vi.mock("../src/crypto.js", async () => {
 });
 
 let fetchCalls = 0;
+let verifier: ShieldedVerifier;
 
 beforeEach(() => {
   fetchCalls = 0;
+  verifier = new ShieldedVerifier({
+    origin: "https://shop.example",
+    registryUrl: "https://registry.example"
+  });
+  verifier.resetForTesting();
   vi.mocked(verifyECDSAP256).mockResolvedValue(true);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (url: string | Request | URL) => {
@@ -43,7 +49,8 @@ beforeEach(() => {
       return originalFetch(url);
     }
     
-    if (urlString.includes("/v1/status/")) {
+    // Match /v1/status/*, /v1/keys/*/status, or /v1/wallet/*
+    if (urlString.includes("/v1/status/") || urlString.match(/\/v1\/keys\/[^/]+\/status/) || urlString.includes("/v1/wallet/")) {
       return {
         ok: true,
         status: 200,
@@ -82,11 +89,6 @@ beforeEach(() => {
     }
     return originalFetch(url);
   }) as typeof fetch;
-});
-
-const verifier = new ShieldedVerifier({
-  origin: "https://shop.example",
-  registryUrl: "https://registry.example"
 });
 
 describe("ShieldedVerifier", () => {

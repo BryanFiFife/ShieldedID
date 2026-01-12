@@ -33,7 +33,7 @@ beforeEach(() => {
         json: async () => globalAny.__walletStatus
       } as Response;
     }
-    if (url.includes("/v1/status/key-1")) {
+    if (url.includes("/v1/status/key-1") || url.includes("/v1/keys/key-1/status")) {
       return {
         ok: true,
         status: 200,
@@ -64,7 +64,7 @@ describe("integration", () => {
       walletId: "wallet-1",
       keys: [{ keyId: "key-1", status: "ACTIVE", publicKey: jwk }]
     };
-    globalAny.__keyStatus = { revokedAt: null };
+    globalAny.__keyStatus = { status: "ACTIVE", revokedAt: null, expiresAt: "2099-12-31T23:59:59Z", createdAt: "2024-01-01T00:00:00Z" };
 
     const verifier = new ShieldedVerifier({
       origin: "https://shop.example",
@@ -109,7 +109,7 @@ describe("integration", () => {
       walletId: "wallet-1",
       keys: [{ keyId: "key-1", status: "ACTIVE", publicKey: jwk }]
     };
-    globalAny.__keyStatus = { revokedAt: "2024-01-01T00:00:00Z" };
+    globalAny.__keyStatus = { status: "REVOKED", revokedAt: "2024-01-01T00:00:00Z", expiresAt: "2099-12-31T23:59:59Z", createdAt: "2024-01-01T00:00:00Z" };
 
     const verifier = new ShieldedVerifier({
       origin: "https://shop.example",

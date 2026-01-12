@@ -408,6 +408,8 @@ export class ShieldedVerifier {
           .find(c => c.type === "AGE_OVER")
           ?.threshold ?? 18; // Fallback to 18 if not specified
 
+        // The context is embedded in the public_inputs by the proveGE function
+        // as "threshold|context" and the Rust verifier checks it matches
         return await verifyGE(
           proofResponse.zkProof.commitment,
           proofResponse.zkProof.bulletproof,
@@ -431,5 +433,10 @@ export class ShieldedVerifier {
       console.error("ZK proof verification failed:", err);
       return false;
     }
+  }
+
+  // Test-only method to reset state
+  resetForTesting(): void {
+    this.registryClient.resetCircuitBreaker();
   }
 }
