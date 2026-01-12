@@ -1,6 +1,6 @@
 # Shielded ID
 
-**Version 1.1.0** | **Status: Production-Ready** | **Last Updated: January 12, 2026**
+**Version 1.2.0** | **Status: Production-Ready** | **Last Updated: January 12, 2026**
 
 🎯 **Global Standards Achieved**: [RFC Protocol Spec](docs/spec/protocol-rfc.md) | [OAuth 2.0 Profile](docs/spec/oauth2-profile.md) | [OWASP Top 10](COMPLIANCE.md) | [ISO 27001 Roadmap](COMPLIANCE.md)
 
