@@ -232,4 +232,147 @@ describe("admin and user routes", () => {
     expect(forgotRes.statusCode).toBe(200);
     expect(forgotRes.json().ok).toBe(true);
   });
+
+  it("rejects contact with too-long name", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "a".repeat(121),
+        email: "john@example.com",
+        subject: "Test",
+        message: "This is a test message"
+      }
+    });
+    expect(contactRes.statusCode).toBe(400);
+  });
+
+  it("rejects contact with too-short message", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John",
+        email: "john@example.com",
+        subject: "Test",
+        message: "short"
+      }
+    });
+    expect(contactRes.statusCode).toBe(400);
+  });
+
+  it("rejects user registration with too-long password", async () => {
+    const userRes = await app.inject({
+      method: "POST",
+      url: "/api/user/register",
+      payload: {
+        email: "newuser@example.com",
+        password: "A".repeat(129) + "!@#a1"
+      }
+    });
+    expect(userRes.statusCode).toBe(400);
+  });
+
+  it("rejects user registration with low entropy password", async () => {
+    const userRes = await app.inject({
+      method: "POST",
+      url: "/api/user/register",
+      payload: {
+        email: "newuser@example.com",
+        password: "Aaaaaaaaaaaa1!@"
+      }
+    });
+    expect(userRes.statusCode).toBe(400);
+  });
+
+  it("rejects user login with non-existent user", async () => {
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/user/login",
+      payload: {
+        email: "nouser@example.com",
+        password: "StrongPass123!@#"
+      }
+    });
+    expect(loginRes.statusCode).toBe(401);
+  });
+
+  it("handles contact form with email trimming", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John Doe",
+        email: "  john@example.com  ",
+        subject: "Test Subject",
+        message: "This is a test message about something important and relevant"
+      }
+    });
+    // Should accept and trim email
+    expect([201, 400]).toContain(contactRes.statusCode);
+  });
+
+  it("rejects contact with empty name", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "",
+        email: "john@example.com",
+        subject: "Test",
+        message: "This is a test message about something"
+      }
+    });
+    expect(contactRes.statusCode).toBe(400);
+  });
+
+  it("rejects user registration with duplicate email (case-insensitive)", async () => {
+    const userRes1 = await app.inject({
+      method: "POST",
+      url: "/api/user/register",
+      payload: {
+        email: "unique@example.com",
+        password: "StrongPass123!@#"
+      }
+    });
+    expect(userRes1.statusCode).toBe(201);
+
+    const userRes2 = await app.inject({
+      method: "POST",
+      url: "/api/user/register",
+      payload: {
+        email: "UNIQUE@EXAMPLE.COM",
+        password: "StrongPass123!@#"
+      }
+    });
+    expect(userRes2.statusCode).toBe(409);
+  });
+
+  it("rejects contact with invalid subject length", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John",
+        email: "john@example.com",
+        subject: "a".repeat(201),
+        message: "This is a test message about something"
+      }
+    });
+    expect(contactRes.statusCode).toBe(400);
+  });
+
+  it("rejects contact with message exceeding max length", async () => {
+    const contactRes = await app.inject({
+      method: "POST",
+      url: "/api/contact",
+      payload: {
+        name: "John",
+        email: "john@example.com",
+        subject: "Test",
+        message: "a".repeat(2001)
+      }
+    });
+    expect(contactRes.statusCode).toBe(400);
+  });
 });

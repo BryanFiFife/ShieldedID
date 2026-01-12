@@ -57,4 +57,112 @@ describe("security validation", () => {
 
     expect(res.statusCode).toBe(400);
   });
+
+  it("rejects with phone number in payload", async () => {
+    const { jwk, privateKey } = await generateKeyPair();
+    const payload = {
+      action: "WALLET_REGISTER",
+      publicKeys: { signing: jwk },
+      webauthnCredentialId: Buffer.from("cred").toString("base64"),
+      suiteVersion: "1.0"
+    };
+    const signature = await signPayload(privateKey, payload);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/register",
+      payload: {
+        ...payload,
+        signature,
+        phone: "555-1234"
+      }
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects with address in payload", async () => {
+    const { jwk, privateKey } = await generateKeyPair();
+    const payload = {
+      action: "WALLET_REGISTER",
+      publicKeys: { signing: jwk },
+      webauthnCredentialId: Buffer.from("cred").toString("base64"),
+      suiteVersion: "1.0"
+    };
+    const signature = await signPayload(privateKey, payload);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/register",
+      payload: {
+        ...payload,
+        signature,
+        address: "123 Main St"
+      }
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects with ssn in payload", async () => {
+    const { jwk, privateKey } = await generateKeyPair();
+    const payload = {
+      action: "WALLET_REGISTER",
+      publicKeys: { signing: jwk },
+      webauthnCredentialId: Buffer.from("cred").toString("base64"),
+      suiteVersion: "1.0"
+    };
+    const signature = await signPayload(privateKey, payload);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/register",
+      payload: {
+        ...payload,
+        signature,
+        ssn: "123-45-6789"
+      }
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects with passport in payload", async () => {
+    const { jwk, privateKey } = await generateKeyPair();
+    const payload = {
+      action: "WALLET_REGISTER",
+      publicKeys: { signing: jwk },
+      webauthnCredentialId: Buffer.from("cred").toString("base64"),
+      suiteVersion: "1.0"
+    };
+    const signature = await signPayload(privateKey, payload);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/register",
+      payload: {
+        ...payload,
+        signature,
+        passport: "ABC123456"
+      }
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("validates required signature field", async () => {
+    const { jwk } = await generateKeyPair();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/register",
+      payload: {
+        publicKeys: { signing: jwk },
+        webauthnCredentialId: Buffer.from("cred").toString("base64"),
+        suiteVersion: "1.0"
+      }
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
 });
