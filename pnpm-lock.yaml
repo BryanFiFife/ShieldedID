@@ -273,6 +273,18 @@ importers:
 
   packages/age-zk:
     devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.19.27
+      '@vitest/coverage-v8':
+        specifier: ^1.4.0
+        version: 1.6.1(vitest@1.6.1(@types/node@20.19.27)(jsdom@24.1.3))
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.27)(jsdom@24.1.3)
       wasm-pack:
         specifier: ^0.12.0
         version: 0.12.1

@@ -115,7 +115,7 @@ export interface ProofResponse {
   claims: Claim[];
   suite: ProofSuite;
   signature: string;
-  // Multiple ZK proofs indexed by claim index
+  // Multiple ZK proofs indexed by claim index (Phase 1 format)
   zkProofs?: {
     [claimIndex: number]: {
       commitment: string;      // base64
@@ -124,6 +124,18 @@ export interface ProofResponse {
       claimType: ClaimType;
       operator: PredicateOperator;
     };
+  };
+  // Legacy single-proof format for AGE_OVER (backward compatibility)
+  zkProof?: {
+    commitment: string;        // base64
+    bulletproof: string;       // base64
+    publicInputs: string;      // base64
+  };
+  // Legacy single-proof format for KYC_LEVEL (backward compatibility)
+  kycZkProof?: {
+    commitment: string;        // base64
+    bulletproof: string;       // base64
+    publicInputs: string;      // base64
   };
 }
 
