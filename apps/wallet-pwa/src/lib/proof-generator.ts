@@ -139,22 +139,6 @@ function computeAge(dateOfBirth: string): number {
 // SECURITY FIX #4: Global mutex for ZK proof generation
 const zkMutex = new Mutex();
 
-function computeAge(dateOfBirth: string): number {
-  const dob = Date.parse(dateOfBirth);
-  if (Number.isNaN(dob)) return 0;
-  const diff = Date.now() - dob;
-  const years = diff / (1000 * 60 * 60 * 24 * 365.25);
-  return Math.floor(years);
-}
-
-function computeAgeOver18(dateOfBirth: string): boolean {
-  const dob = Date.parse(dateOfBirth);
-  if (Number.isNaN(dob)) return false;
-  const diff = Date.now() - dob;
-  const years = diff / (1000 * 60 * 60 * 24 * 365.25);
-  return years >= 18;
-}
-
 const EU_COUNTRIES = "AT,BE,BG,HR,CY,CZ,DK,EE,FI,FR,DE,GR,HU,IE,IT,LV,LT,LU,MT,NL,PL,PT,RO,SK,SI,ES,SE";
 
 export async function generateProof(

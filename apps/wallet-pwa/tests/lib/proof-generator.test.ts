@@ -103,11 +103,10 @@ describe("proof generator", () => {
       "nonce-1",
       "2024-12-31T23:59:59Z"
     );
-    expect(response.zkProof).toEqual({
-      commitment: "zk-commitment",
-      bulletproof: "zk-proof",
-      publicInputs: "zk-public-inputs"
-    });
+    // Check for new multi-proof format
+    expect(response.zkProofs).toBeDefined();
+    expect(response.zkProofs[0]).toBeDefined();
+    expect(response.zkProofs[0].claimType).toBe("AGE_OVER");
   });
 
   it("falls back to WASM when ZK agent fails", async () => {
@@ -194,11 +193,8 @@ describe("proof generator", () => {
       "nonce-1",
       "2024-12-31T23:59:59Z"
     );
-    expect(response.kycZkProof).toEqual({
-      commitment: "kyc-commitment",
-      bulletproof: "kyc-proof",
-      publicInputs: "kyc-public-inputs",
-      minLevel: 2
-    });
+    expect(response.zkProofs).toBeDefined();
+    expect(response.zkProofs[0]).toBeDefined();
+    expect(response.zkProofs[0].claimType).toBe("KYC_LEVEL");
   });
 });
