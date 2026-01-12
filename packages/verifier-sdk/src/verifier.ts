@@ -810,7 +810,26 @@ export class ShieldedVerifier {
           return false;
         }
         
-        return true;
+        // Verify context binding (nonce, origin, expiry)
+        const context = parts.slice(2).join('|');
+        const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+        
+        if (context !== expectedContext) {
+          return false;
+        }
+
+        // Actually verify the cryptographic proof using Rust verification
+        const ageThreshold = request.requestedClaims
+          .find(c => c.type === "AGE_OVER")
+          ?.threshold ?? 18;
+
+        return await verify_ge_components(
+          commitment,
+          proof,
+          publicInputs,
+          BigInt(ageThreshold),
+          expectedContext
+        );
       } catch {
         return false;
       }

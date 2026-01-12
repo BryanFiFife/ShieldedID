@@ -1,4 +1,4 @@
-/** Comprehensive claim types supporting 22 global predicates (Phase 1). */
+/** Comprehensive claim types supporting 30 global predicates (Phase 1 + Phase 2). */
 export type ClaimType = 
   // Age Verification (4 types)
   | "AGE_OVER"
@@ -35,6 +35,16 @@ export type ClaimType =
   | "CREDENTIAL_VALID"
   | "CREDENTIAL_ACTIVE"
   | "CREDENTIAL_LEVEL"
+  
+  // Phase 2: Advanced Predicates (8 types)
+  | "CONSENT_REQUIRED"
+  | "CREDENTIAL_CHAIN"
+  | "RISK_SCORE"
+  | "DEVICE_COMPLIANCE"
+  | "TRANSACTION_LIMIT"
+  | "REPUTATION_SCORE"
+  | "COMPLIANCE_STATUS"
+  | "CREDENTIAL_METADATA"
   
   | "CONTINUITY"
   | "CUSTOM";
@@ -89,6 +99,43 @@ export interface RequestedClaim {
   // For document validation
   minDocumentAge?: number;  // timestamp or days
   issuerCountry?: string;
+  
+  // Phase 2: Advanced predicate parameters
+  // For CONSENT_REQUIRED
+  consentType?: string;
+  consentDate?: number;
+  consentVersion?: number;
+  minConsentVersion?: number;
+  
+  // For CREDENTIAL_CHAIN
+  chainLength?: number;
+  requiredIssuers?: string[];
+  
+  // For RISK_SCORE, REPUTATION_SCORE, TRANSACTION_LIMIT
+  maxRiskScore?: number;
+  riskAssessmentDate?: number;
+  minAvailableLimit?: number;
+  limitResetDate?: number;
+  limitType?: "DAILY" | "MONTHLY" | "CUMULATIVE";
+  minReputationScore?: number;
+  reputationSource?: string;
+  maxScoreAge?: number;
+  
+  // For DEVICE_COMPLIANCE
+  osVersion?: string;
+  hasEncryption?: boolean;
+  hasMFA?: boolean;
+  maxComplianceAge?: number;
+  
+  // For COMPLIANCE_STATUS
+  jurisdiction?: string;
+  complianceLevel?: number;
+  lastAuditDate?: number;
+  
+  // For CREDENTIAL_METADATA
+  metadataKey?: string;
+  metadataValue?: string | number;
+  comparisonOperator?: "EQ" | "GE" | "LE" | "GT" | "LT";
 }
 
 /** Policy enforcing status checks and freshness. */
