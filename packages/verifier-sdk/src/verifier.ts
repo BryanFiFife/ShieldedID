@@ -488,7 +488,10 @@ export class ShieldedVerifier {
     }
 
     // Handle ZK proof verification
-    if (proofResponse.zkProofs && Object.keys(proofResponse.zkProofs).length > 0) {
+    const hasZkProof = (proofResponse.zkProofs && Object.keys(proofResponse.zkProofs).length > 0) || 
+                       proofResponse.zkProof ||
+                       proofResponse.kycZkProof;
+    if (hasZkProof) {
       // SECURITY FIX #5A: Track ZK verification timing
       const zkStart = performance.now();
       const zkValid = await this.verifyZkProof(request, proofResponse);
@@ -976,7 +979,7 @@ export class ShieldedVerifier {
           proof,
           publicInputs,
           BigInt(ageThreshold),
-          expectedContext
+          context
         );
       } catch {
         return false;
@@ -1042,7 +1045,20 @@ export class ShieldedVerifier {
         const commitment = base64UrlDecode(proofResponse.kycZkProof.commitment);
         const proof = base64UrlDecode(proofResponse.kycZkProof.bulletproof);
         const publicInputs = base64UrlDecode(proofResponse.kycZkProof.publicInputs);
-        const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+        
+        // Extract and validate context from public inputs
+        const publicInputsStr = new TextDecoder().decode(publicInputs);
+        const parts = publicInputsStr.split('|');
+        if (parts.length < 3) {
+          return false;
+        }
+        
+        const context = parts.slice(2).join('|');
+        const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+        
+        if (context !== expectedContext) {
+          return false;
+        }
 
         return await verify_ge_components(
           commitment,
@@ -1065,7 +1081,20 @@ export class ShieldedVerifier {
     const commitment = base64UrlDecode(zkProof.commitment);
     const proof = base64UrlDecode(zkProof.bulletproof);
     const publicInputs = base64UrlDecode(zkProof.publicInputs);
-    const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+    
+    // Extract and validate context from public inputs
+    const publicInputsStr = new TextDecoder().decode(publicInputs);
+    const parts = publicInputsStr.split('|');
+    if (parts.length < 3) {
+      return false;
+    }
+    
+    const context = parts.slice(2).join('|');
+    const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+    
+    if (context !== expectedContext) {
+      return false;
+    }
 
     return await verify_ge_components(
       commitment,
