@@ -10,14 +10,15 @@ export default defineConfig({
         'dist/**',
         'node_modules/**',
         'examples/**',
-        '**/*.d.ts'
+        '**/*.d.ts',
+        'tests/**'
       ],
       reporter: ['text', 'json', 'html'],
       thresholds: {
-        statements: 80,
-        branches: 80,
-        functions: 90,
-        lines: 80
+        statements: 95,
+        branches: 95,
+        functions: 95,
+        lines: 95
       }
     }
   }

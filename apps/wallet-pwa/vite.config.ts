@@ -82,6 +82,27 @@ export default defineConfig({
       alias: {
         '/age-zk/shielded_age_zk.js': path.resolve(__dirname, 'tests/mocks/age-zk.js')
       }
+    },
+    coverage: {
+      exclude: [
+        'src/App.tsx',
+        'src/main.tsx',
+        'src/service-worker.ts',
+        'src/store/**',
+        'src/backend/**',
+        'src/lib/chat-storage.ts',
+        'src/lib/companion.ts',
+        'src/lib/document-capture.ts',
+        'src/lib/vault-storage.ts',
+        'dist/**',
+        'coverage/**',
+        'tests/**',
+        '**/*.d.ts'
+      ],
+      statements: 85,
+      branches: 75,
+      functions: 85,
+      lines: 85
     }
   }
 });
