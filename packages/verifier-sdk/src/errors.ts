@@ -66,6 +66,8 @@ export enum ShieldedErrorCode {
   // General errors
   UNKNOWN_ERROR = "SHIELDED_ERROR_UNKNOWN",
   NOT_IMPLEMENTED = "SHIELDED_ERROR_NOT_IMPLEMENTED",
+  INVALID_CLAIM_SCHEMA = "SHIELDED_ERROR_VALIDATION_INVALID_CLAIM_SCHEMA",
+  PROOF_SIZE_EXCEEDED = "SHIELDED_ERROR_LIMITS_PROOF_SIZE_EXCEEDED",
 }
 
 /**
@@ -107,6 +109,8 @@ export const errorCodeToHttpStatus: Record<ShieldedErrorCode, number> = {
   [ShieldedErrorCode.MISSING_CONFIG]: 500,
   [ShieldedErrorCode.UNKNOWN_ERROR]: 500,
   [ShieldedErrorCode.NOT_IMPLEMENTED]: 501,
+  [ShieldedErrorCode.INVALID_CLAIM_SCHEMA]: 400,
+  [ShieldedErrorCode.PROOF_SIZE_EXCEEDED]: 413,
 };
 
 /**
@@ -206,6 +210,8 @@ export class ShieldedError extends Error {
       [ShieldedErrorCode.NETWORK_ERROR]: "Network error occurred",
       [ShieldedErrorCode.TLS_CERTIFICATE_INVALID]: "TLS certificate validation failed",
       [ShieldedErrorCode.NOT_IMPLEMENTED]: "Feature not implemented",
+      [ShieldedErrorCode.INVALID_CLAIM_SCHEMA]: "Invalid claim schema",
+      [ShieldedErrorCode.PROOF_SIZE_EXCEEDED]: "Proof size exceeds limits",
     };
 
     return clientMessages[this.code] || clientMessages[ShieldedErrorCode.UNKNOWN_ERROR];
@@ -294,4 +300,6 @@ export const errorCategories: Record<ShieldedErrorCode, string> = {
   [ShieldedErrorCode.WASM_VERIFICATION_FAILED]: "security",
   [ShieldedErrorCode.UNKNOWN_ERROR]: "unknown",
   [ShieldedErrorCode.NOT_IMPLEMENTED]: "config",
+  [ShieldedErrorCode.INVALID_CLAIM_SCHEMA]: "validation",
+  [ShieldedErrorCode.PROOF_SIZE_EXCEEDED]: "limits",
 };

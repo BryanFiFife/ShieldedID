@@ -1,4 +1,4 @@
-import { randomUUID, createHmac, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 // @ts-ignore
 import bcrypt from "bcryptjs";
@@ -38,7 +38,7 @@ function validatePasswordStrength(password: string): { ok: boolean; error?: stri
   if (!/[0-9]/.test(password)) {
     return { ok: false, error: "PASSWORD_NEEDS_NUMBER" };
   }
-  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>?]/.test(password)) {
     return { ok: false, error: "PASSWORD_NEEDS_SPECIAL" };
   }
   
@@ -52,13 +52,13 @@ function validatePasswordStrength(password: string): { ok: boolean; error?: stri
 }
 
 // Generate cryptographically secure CSRF token
-function generateCsrfToken(): string {
+function _generateCsrfToken(): string {
   // Generate 32 bytes of random data and convert to hex (64 chars)
   return randomBytes(32).toString("hex");
 }
 
 // Verify CSRF token - check format and validity
-function verifyCsrfToken(token: string, expectedToken: string | null): boolean {
+function _verifyCsrfToken(token: string, expectedToken: string | null): boolean {
   if (!expectedToken || !token) return false;
   if (typeof token !== "string" || typeof expectedToken !== "string") return false;
   if (token.length !== 64 || expectedToken.length !== 64) return false;
@@ -105,7 +105,7 @@ const userRegisterSchema = z
 
 const sessionCookie = "shielded_admin_session";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
-const SESSION_CLEANUP_HOURS = 48;
+const _SESSION_CLEANUP_HOURS = 48;
 
 // Time utilities
 function nowIso(): string {
@@ -139,7 +139,7 @@ function audit(
 }
 
 // Session management with validation
-interface SessionData {
+interface _SessionData {
   email: string;
   createdAt: string;
   expiresAt: string;
@@ -170,7 +170,7 @@ function getSessionEmail(
 }
 
 // Rate limiting helpers
-function checkRateLimit(db: ReturnType<typeof getDb>, key: string, maxAttempts: number = 5, windowMs: number = 60000): boolean {
+function _checkRateLimit(db: ReturnType<typeof getDb>, key: string, maxAttempts: number = 5, windowMs: number = 60000): boolean {
   const now = Date.now();
   const windowStart = new Date(now - windowMs).toISOString();
   
