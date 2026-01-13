@@ -1,0 +1,122 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import React from "react";
+
+// Mock ReactDOM
+const mockCreateRoot = vi.fn();
+vi.mock("react-dom/client", () => ({
+  default: { createRoot: mockCreateRoot },
+  createRoot: mockCreateRoot
+}));
+
+// Mock App component
+const MockApp = () => <div data-testid="app">App Component</div>;
+vi.mock("../src/App", () => ({
+  App: MockApp
+}));
+
+// Mock styles
+vi.mock("../src/styles.css", () => ({}));
+
+describe("main.tsx", () => {
+  let mockRoot: any;
+  let mockRender: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+
+    mockRender = vi.fn();
+    mockRoot = { render: mockRender };
+    mockCreateRoot.mockReturnValue(mockRoot);
+
+    // Mock document.getElementById
+    document.getElementById = vi.fn().mockReturnValue({
+      tagName: 'DIV',
+      id: 'root'
+    });
+
+    // Mock navigator.serviceWorker
+    Object.defineProperty(navigator, 'serviceWorker', {
+      value: {
+        register: vi.fn().mockResolvedValue({})
+      },
+      writable: true
+    });
+
+    // Mock window.addEventListener
+    window.addEventListener = vi.fn();
+  });
+
+  it("renders App component in StrictMode", async () => {
+    // Import main.tsx to trigger execution
+    await import("../src/main.tsx");
+
+    expect(mockCreateRoot).toHaveBeenCalledWith(document.getElementById("root"));
+    expect(mockRender).toHaveBeenCalledWith(
+      <React.StrictMode>
+        <MockApp />
+      </React.StrictMode>
+    );
+  });
+
+  it("registers service worker on window load", async () => {
+    // Import main.tsx to trigger execution
+    await import("../src/main.tsx");
+
+    // Check that addEventListener was called with 'load'
+    expect(window.addEventListener).toHaveBeenCalledWith('load', expect.any(Function));
+
+    // Get the load handler
+    const loadHandler = (window.addEventListener as any).mock.calls.find(
+      ([event]) => event === 'load'
+    )?.[1];
+
+    expect(loadHandler).toBeDefined();
+
+    // Call the load handler
+    loadHandler();
+
+    expect(navigator.serviceWorker.register).toHaveBeenCalledWith("/service-worker.js");
+  });
+
+  it("handles service worker registration failure gracefully", async () => {
+    // Set up the mock to reject
+    Object.defineProperty(navigator, 'serviceWorker', {
+      value: {
+        register: vi.fn().mockRejectedValue(new Error("SW failed"))
+      },
+      writable: true
+    });
+
+    // Import main.tsx to trigger execution
+    await import("../src/main.tsx");
+
+    // Get the load handler
+    const loadHandler = (window.addEventListener as any).mock.calls.find(
+      ([event]) => event === 'load'
+    )?.[1];
+
+    expect(loadHandler).toBeDefined();
+
+    // Call the load handler - it should not throw
+    await loadHandler();
+
+    // The service worker registration should have been attempted
+    expect(navigator.serviceWorker.register).toHaveBeenCalledWith("/service-worker.js");
+  });
+
+  it("throws error if root element not found", async () => {
+    // Set up the mock to return null
+    document.getElementById = vi.fn().mockReturnValue(null);
+
+    // Mock createRoot to throw when passed null
+    mockCreateRoot.mockImplementation(() => {
+      throw new Error("createRoot: container is null");
+    });
+
+    // The import should execute and throw during the createRoot call
+    await expect(async () => {
+      await import("../src/main.tsx");
+    }).rejects.toThrow("createRoot: container is null");
+  });
+});

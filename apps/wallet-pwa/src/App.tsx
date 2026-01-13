@@ -12,13 +12,12 @@ import "./styles.css";
 const registryUrl = (import.meta.env as Record<string, string>).VITE_REGISTRY_URL || "http://localhost:3000";
 
 export function App() {
-  const { currentFlow, vaultLocked, unlockVault } = useWalletStore();
+  const { currentFlow, vaultLocked, unlockVault, initState, setInitState } = useWalletStore();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "signup" | "forgot" | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [initState, setInitState] = useState<"loading" | "unlock" | "enroll" | "ready">("loading");
   const [unlockPassphrase, setUnlockPassphrase] = useState("");
   const [unlockError, setUnlockError] = useState("");
 
@@ -45,6 +44,33 @@ export function App() {
       });
     }
   }, []);
+
+  // Wallet flow content (always define this hook)
+  const content = useMemo(() => {
+    if (vaultLocked) {
+      return <div className="panel">Vault locked. Unlock to continue.</div>;
+    }
+    switch (currentFlow) {
+      case "enrollment":
+        return <EnrollmentFlow />;
+      case "proof":
+        return <ProofFlow />;
+      case "settings":
+        return <Settings />;
+      case "companion":
+        return <Companion />;
+      default:
+        return (
+          <div className="stack">
+            <div className="panel">
+              <h2>Shielded ID Wallet</h2>
+              <p>Offline-first, privacy-preserving identity vault.</p>
+            </div>
+            <SafetyMode />
+          </div>
+        );
+    }
+  }, [currentFlow, vaultLocked]);
 
   const handleUnlockVault = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,7 +242,7 @@ export function App() {
     setPassword("");
   };
 
-  // Auth flow: optional login, then wallet
+  // Show unlock screen
   if (!userEmail && authMode) {
     if (authMode === "login") {
       return (
@@ -305,33 +331,6 @@ export function App() {
       );
     }
   }
-
-  // Wallet flow (with optional account header)
-  const content = useMemo(() => {
-    if (vaultLocked) {
-      return <div className="panel">Vault locked. Unlock to continue.</div>;
-    }
-    switch (currentFlow) {
-      case "enrollment":
-        return <EnrollmentFlow />;
-      case "proof":
-        return <ProofFlow />;
-      case "settings":
-        return <Settings />;
-      case "companion":
-        return <Companion />;
-      default:
-        return (
-          <div className="stack">
-            <div className="panel">
-              <h2>Shielded ID Wallet</h2>
-              <p>Offline-first, privacy-preserving identity vault.</p>
-            </div>
-            <SafetyMode />
-          </div>
-        );
-    }
-  }, [currentFlow, vaultLocked]);
 
   return (
     <div className="app-shell">

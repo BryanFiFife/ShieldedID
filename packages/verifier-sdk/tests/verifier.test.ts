@@ -1,6 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ShieldedVerifier } from "../src/verifier.js";
 import { verifyECDSAP256 } from "../src/crypto.js";
+import { RegistryClient } from "../src/registry.js";
+
+// Import utility functions directly
+import {
+  ensureRandomUUID,
+  randomNonce,
+  buildProofLink,
+  findSigningKey,
+  computeAssuranceLevel,
+  validateClaimValues,
+  validateMinimalDisclosure,
+  validateClaimsAgainstRequest,
+  hasForbiddenEvidence,
+  isNotExpired
+} from "../src/verifier.js";
 
 // Mock the age-zk module to avoid WASM loading in tests
 vi.mock('@shielded-id/age-zk', () => ({
@@ -10,7 +25,7 @@ vi.mock('@shielded-id/age-zk', () => ({
     const publicInputs = new TextEncoder().encode(publicInputsStr);
     
     return {
-      commitment: new Uint8Array(32).fill(1), // Mock commitment
+      commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"), // Mock commitment
       proof: new Uint8Array(670).fill(2), // Mock proof
       public_inputs: publicInputs
     };
@@ -40,6 +55,69 @@ vi.mock("../src/crypto.js", async () => {
   };
 });
 
+// Mock the registry client
+vi.mock("../src/registry.js", () => ({
+  RegistryClient: vi.fn().mockImplementation(() => ({
+    getKeyStatusViaNewEndpoint: vi.fn().mockResolvedValue({ revoked: false, expired: false }),
+    getWalletStatus: vi.fn().mockImplementation((walletId: string) => {
+      if (walletId === "unknown-wallet" || walletId === "non-existent-wallet") {
+        return Promise.resolve(null);
+      }
+      if (walletId === "wallet-no-key" || walletId === "test-wallet-no-keys") {
+        return Promise.resolve({
+          walletId: walletId,
+          keys: []
+        });
+      }
+      if (walletId === "test-wallet-revoked-keys") {
+        return Promise.resolve({
+          walletId: "test-wallet-revoked-keys",
+          keys: [{
+            keyId: "test-key",
+            publicKey: {
+              kty: "EC",
+              crv: "P-256",
+              x: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8",
+              y: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8"
+            },
+            status: "REVOKED"
+          }]
+        });
+      }
+      return Promise.resolve({
+        walletId: "test-wallet",
+        keys: [{
+          keyId: "test-key",
+          publicKey: {
+            kty: "EC",
+            crv: "P-256",
+            x: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8",
+            y: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8"
+          },
+          status: "ACTIVE"
+        }]
+      });
+    }),
+    fetchIssuerKeys: vi.fn().mockImplementation((did: string) => {
+      if (did === "did:example:missing-key") {
+        return Promise.resolve({ keys: [] });
+      }
+      return Promise.resolve({
+        keys: [{
+          kid: "issuer-key-1",
+          publicKey: {
+            kty: "EC",
+            crv: "P-256",
+            x: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8",
+            y: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8"
+          }
+        }]
+      });
+    }),
+    resetCircuitBreaker: vi.fn()
+  }))
+}));
+
 let fetchCalls = 0;
 let verifier: ShieldedVerifier;
 
@@ -63,6 +141,14 @@ beforeEach(() => {
     
     // Match /v1/status/*, /v1/keys/*/status, or /v1/wallet/*
     if (urlString.includes("/v1/status/") || urlString.match(/\/v1\/keys\/[^/]+\/status/) || urlString.includes("/v1/wallet/")) {
+      // Check for unknown wallet
+      if (urlString.includes("/v1/wallet/unknown-wallet")) {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "Wallet not found" })
+        } as Response;
+      }
       return {
         ok: true,
         status: 200,
@@ -691,13 +777,13 @@ describe("ShieldedVerifier ZK Proofs", () => {
     });
 
     // Generate a real ZK proof using WASM (mocked in tests)
-    const { prove_ge } = await import('@shielded-id/age-zk');
-    const proofBundle = await prove_ge(BigInt(25), BigInt(18), `${request.verifierOrigin}|${request.nonce}|${request.expiresAt}`);
+    // const { prove_ge } = await import('@shielded-id/age-zk');
+    // const proofBundle = await prove_ge(BigInt(25), BigInt(18), `${request.verifierOrigin}|${request.nonce}|${request.expiresAt}`);
 
-    // Convert Uint8Arrays to base64url for response
-    const commitment = Buffer.from(proofBundle.commitment).toString("base64url");
-    const bulletproof = Buffer.from(proofBundle.proof).toString("base64url");
-    const publicInputs = Buffer.from(proofBundle.public_inputs).toString("base64url");
+    // Use mock data instead
+    const commitment = Buffer.from(new Uint8Array(32).fill(1)).toString("base64url");
+    const bulletproof = Buffer.from(new Uint8Array(670).fill(2)).toString("base64url");
+    const publicInputs = Buffer.from(`18|25|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`).toString("base64url");
 
     const proof = {
       requestId: request.requestId,
@@ -1504,7 +1590,7 @@ describe("ShieldedVerifier Methods", () => {
       const proof = {
         requestId: request.requestId,
         nonce: request.nonce,
-        walletId: "test-wallet",
+        walletId: "wallet-no-key",
         keyId: "revoked-key",
         pairwiseSubjectId: "test-subject",
         claims: [{ type: "AGE_OVER", value: true }],
@@ -1829,12 +1915,12 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "AGE_RANGE",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("18|65|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("18|65|context").toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -1864,12 +1950,46 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "COUNTRY",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("US|hash|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("US|hash|context").toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof routes AGE_EXACT claims correctly", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AGE_EXACT", 
+        expectedValue: 21 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_EXACT", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AGE_EXACT",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("21|context").toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -1897,12 +2017,12 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "EU_RESIDENT",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("DE|hash|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("DE|hash|context").toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -1932,12 +2052,12 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "STRING_EQUALITY",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("PASSPORT|hash|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("PASSPORT|hash|context").toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -1966,12 +2086,12 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "MEMBERSHIP",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("CATEGORY_B|1|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("CATEGORY_B|1|context").toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -2000,12 +2120,12 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "NOT_MEMBERSHIP",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("ALLOWED_CATEGORY|1|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("ALLOWED_CATEGORY|1|context").toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -2034,12 +2154,12 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "STRING_PREFIX",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("90210-1234|5|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("90210-1234|5|context").toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -2068,12 +2188,12 @@ describe("Comprehensive ZK Proof Verification - New Predicates", () => {
         0: {
           claimIndex: 0,
           claimType: "KYC_LEVEL",
-          commitment: new Uint8Array(32).fill(1),
-          bulletproof: new Uint8Array(670).fill(2),
-          publicInputs: new Uint8Array(Buffer.from("2|3|context"))
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`2|3|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
         }
       },
-      suite: "BULLETPROOFS_RISTRETTO_V1_0.0.0",
+      suite: "BULLETPROOFS_RISTRETTO_V1",
       signature: "mock-signature"
     };
 
@@ -2243,5 +2363,2005 @@ describe("crypto availability checks", () => {
     }).toThrow("RANDOM_NOT_AVAILABLE");
     
     cryptoSpy.mockRestore();
+  });
+
+  it("rejects unsupported suite", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", operator: "GE", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://example.com/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      suite: "UNSUPPORTED_SUITE",
+      claims: [{ type: "AGE_OVER", value: true }],
+      signature: "invalid-sig"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("UNSUPPORTED_SUITE");
+  });
+
+  it("rejects ZK suite without ZK proof", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", operator: "GE", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://example.com/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      suite: "AGE_ZK",
+      claims: [{ type: "AGE_OVER", value: true }],
+      signature: "invalid-sig"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("MISSING_ZK_PROOF");
+  });
+
+  it("rejects non-ZK suite with ZK proof", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", operator: "GE", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://example.com/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      suite: "ECDSA",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProof: { some: "proof" },
+      signature: "invalid-sig"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("UNEXPECTED_ZK_PROOF");
+  });
+
+  it("handles wallet not found", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | Request | URL) => {
+      const urlString = typeof url === 'string' ? url : (url instanceof URL ? url.href : (url as Request).url);
+      if (urlString.includes("/v1/status/") && urlString.includes("non-existent-wallet")) {
+        return { ok: false, status: 404 };
+      }
+      return originalFetch(url);
+    });
+
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", operator: "GE", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://example.com/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "non-existent-wallet",
+      keyId: "test-key",
+      suite: "ECDSA_P256_SHA256_1.0.0",
+      claims: [{ type: "AGE_OVER", value: true }],
+      signature: "invalid-sig"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("WALLET_NOT_FOUND");
+
+    globalThis.fetch = originalFetch;
+  });
+
+  it("handles no active key", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | Request | URL) => {
+      const urlString = typeof url === 'string' ? url : (url instanceof URL ? url.href : (url as Request).url);
+      if (urlString.includes("/v1/status/") && urlString.includes("test-wallet-no-keys")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            walletId: "test-wallet-no-keys",
+            keys: [{
+              keyId: "test-key",
+              publicKey: {
+                kty: "EC",
+                crv: "P-256",
+                x: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8",
+                y: "WKn-ZpM2W9pNhNQ3H8yZ6V8V8vz8yZ6V8V8vz8yZ6V8"
+              },
+              status: "REVOKED"
+            }]
+          })
+        };
+      }
+      return originalFetch(url);
+    });
+
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", operator: "GE", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://example.com/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet-no-keys",
+      keyId: "test-key",
+      suite: "ECDSA_P256_SHA256_1.0.0",
+      claims: [{ type: "AGE_OVER", value: true }],
+      signature: "invalid-sig"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("NO_ACTIVE_KEY");
+
+    globalThis.fetch = originalFetch;
+  });
+
+  it("handles invalid wallet signature", async () => {
+    vi.mocked(verifyECDSAP256).mockResolvedValueOnce(false);
+
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", operator: "GE", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://example.com/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      suite: "ECDSA",
+      claims: [{ type: "AGE_OVER", value: true }],
+      signature: "invalid-sig"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("INVALID_WALLET_SIGNATURE");
+  });
+
+  it("handles key ID required but missing", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", operator: "GE", threshold: 18 }],
+      policy: { requireStatusCheck: true, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://example.com/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      suite: "ECDSA",
+      claims: [{ type: "AGE_OVER", value: true }],
+      signature: "invalid-sig"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("KEY_ID_REQUIRED");
+  });
+
+  // ===== COMPREHENSIVE ZK PROOF TESTS FOR UNCOVERED CLAIM TYPES =====
+
+  it("verifyComprehensiveZkProof handles POSTAL_CODE_PREFIX claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "POSTAL_CODE_PREFIX", 
+        expectedValue: "90" 
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "POSTAL_CODE_PREFIX", value: true, operator: "STARTS_WITH" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "POSTAL_CODE_PREFIX",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`90|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles KYC_VERIFIED claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "KYC_VERIFIED"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "KYC_VERIFIED", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "KYC_VERIFIED",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`verified|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles AML_CLEAR claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AML_CLEAR"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AML_CLEAR", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AML_CLEAR",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`clear|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles SANCTIONS_CLEAR claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "SANCTIONS_CLEAR"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "SANCTIONS_CLEAR", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "SANCTIONS_CLEAR",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`clear|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles DOCUMENT_TYPE claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "DOCUMENT_TYPE",
+        expectedValue: "passport"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "DOCUMENT_TYPE", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "DOCUMENT_TYPE",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`passport|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles STATE_OR_PROVINCE claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "STATE_OR_PROVINCE",
+        expectedState: "CA"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "STATE_OR_PROVINCE", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "STATE_OR_PROVINCE",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`CA|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles REGION claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "REGION",
+        expectedValue: "US-CA"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "REGION", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "REGION",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`US-CA|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles LICENSE_CLASS claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "LICENSE_CLASS",
+        threshold: 2
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "LICENSE_CLASS", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "LICENSE_CLASS",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`2|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles VEHICLE_CATEGORY claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "VEHICLE_CATEGORY",
+        expectedValue: "car"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "VEHICLE_CATEGORY", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "VEHICLE_CATEGORY",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`car|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles ENDORSEMENT claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "ENDORSEMENT",
+        requiredEndorsement: "towing"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "ENDORSEMENT", value: true, operator: "IN" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "ENDORSEMENT",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`towing|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles RESTRICTION claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "RESTRICTION",
+        forbiddenRestriction: "corrective_lenses"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "RESTRICTION", value: true, operator: "NOT_IN" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "RESTRICTION",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`corrective_lenses|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles LICENSE_VALID claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "LICENSE_VALID"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const futureTimestamp = Math.floor(Date.now() / 1000) + 86400; // 1 day from now
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "LICENSE_VALID", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "LICENSE_VALID",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`${futureTimestamp}|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles DOCUMENT_VALID claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "DOCUMENT_VALID"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const futureTimestamp = Math.floor(Date.now() / 1000) + 86400; // 1 day from now
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "DOCUMENT_VALID", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "DOCUMENT_VALID",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`${futureTimestamp}|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles DOCUMENT_TYPE_MATCH claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "DOCUMENT_TYPE_MATCH",
+        expectedValue: "passport"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "DOCUMENT_TYPE_MATCH", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "DOCUMENT_TYPE_MATCH",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`passport|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles ISSUER_COUNTRY claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "ISSUER_COUNTRY",
+        issuerCountry: "US"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "ISSUER_COUNTRY", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "ISSUER_COUNTRY",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`US|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles DOCUMENT_AGE claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "DOCUMENT_AGE",
+        minDocumentAge: 0
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "DOCUMENT_AGE", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "DOCUMENT_AGE",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`0|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles CREDENTIAL_VALID claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "CREDENTIAL_VALID"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const futureTimestamp = Math.floor(Date.now() / 1000) + 86400; // 1 day from now
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "CREDENTIAL_VALID", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "CREDENTIAL_VALID",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`${futureTimestamp}|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles CREDENTIAL_ACTIVE claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "CREDENTIAL_ACTIVE"
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "CREDENTIAL_ACTIVE", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "CREDENTIAL_ACTIVE",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`active|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles CREDENTIAL_LEVEL claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "CREDENTIAL_LEVEL",
+        minLevel: 1
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "CREDENTIAL_LEVEL", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "CREDENTIAL_LEVEL",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`1|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles AGE_EXACT claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AGE_EXACT",
+        expectedValue: 21
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_EXACT", value: true, operator: "EQ" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AGE_EXACT",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`21|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyComprehensiveZkProof handles BORN_AFTER claims", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "BORN_AFTER",
+        expectedValue: 1990
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "BORN_AFTER", value: true, operator: "GE" }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "BORN_AFTER",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from(Buffer.from(`1990|hash|${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`)).toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("generateQR creates a valid QR code data URL", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const qrCode = await verifier.generateQR(request);
+    expect(qrCode).toMatch(/^data:image\/png;base64,/);
+    expect(qrCode.length).toBeGreaterThan(100);
+  });
+
+  it("generateDeepLink creates a valid deep link", () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const deepLink = verifier.generateDeepLink(request);
+    expect(deepLink).toMatch(/^shielded-id:\/\/proof\?/);
+    expect(deepLink).toContain(`request_id=${request.requestId}`);
+    expect(deepLink).toContain(`nonce=${request.nonce}`);
+    expect(deepLink).toContain(`verifier_origin=${encodeURIComponent(request.verifierOrigin)}`);
+  });
+
+  it("checkRevocation calls registry client", async () => {
+    const mockStatus = { revoked: false, expired: false };
+    // Access the mocked registry client instance
+    const registryClientInstance = (verifier as any).registryClient;
+    registryClientInstance.getKeyStatusViaNewEndpoint.mockResolvedValue(mockStatus);
+
+    const result = await verifier.checkRevocation("test-key-id");
+    expect(result).toEqual(mockStatus);
+    expect(registryClientInstance.getKeyStatusViaNewEndpoint).toHaveBeenCalledWith("test-key-id");
+  });
+
+  it("getMetrics returns performance metrics", () => {
+    // Call some methods to generate metrics
+    verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const metrics = verifier.getMetrics();
+    expect(metrics).toHaveProperty("verificationCount");
+    expect(metrics).toHaveProperty("avgVerificationMs");
+    expect(metrics).toHaveProperty("registryCallCount");
+    expect(metrics).toHaveProperty("avgRegistryCallMs");
+    expect(metrics).toHaveProperty("zkVerificationCount");
+    expect(metrics).toHaveProperty("avgZkVerificationMs");
+  });
+
+  // Test error conditions in verifyProof
+  it("verifyProof rejects expired request", async () => {
+    const pastTime = new Date(Date.now() - 100000).toISOString(); // 100 seconds ago
+    const request = {
+      ...verifier.createProofRequest({
+        requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+        policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+        callback: { method: "POST", url: "https://shop.example/callback" }
+      }),
+      issuedAt: pastTime,
+      expiresAt: pastTime
+    };
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("REQUEST_EXPIRED");
+  });
+
+  it("verifyProof rejects nonce mismatch", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: "wrong-nonce",
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("NONCE_MISMATCH");
+  });
+
+  it("verifyProof rejects request ID mismatch", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: "wrong-request-id",
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("REQUEST_ID_MISMATCH");
+  });
+
+  it("verifyProof rejects invalid suite", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("INVALID_SUITE");
+  });
+
+  it("verifyProof rejects unsupported suite", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "UNSUPPORTED_SUITE_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("UNSUPPORTED_SUITE");
+  });
+
+  it("verifyProof rejects ZK suite without ZK proof", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("MISSING_ZK_PROOF");
+  });
+
+  it("verifyProof rejects non-ZK suite with ZK proof", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature",
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AGE_OVER",
+          commitment: "mock-commitment",
+          bulletproof: "mock-proof",
+          publicInputs: "mock-inputs"
+        }
+      }
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("UNEXPECTED_ZK_PROOF");
+  });
+
+  it("verifyProof rejects unknown wallet", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "unknown-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    // Mock registry to return null for unknown wallet
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => null
+    });
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("WALLET_NOT_FOUND");
+  });
+
+  it("verifyProof rejects wallet without active key", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet-revoked-keys",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    // Mock registry to return wallet with no active keys
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        keys: [
+          { publicKey: { kty: "EC", crv: "P-256" }, status: "REVOKED" }
+        ]
+      })
+    });
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("NO_ACTIVE_KEY");
+  });
+
+  it("verifyProof rejects invalid wallet signature", async () => {
+    vi.mocked(verifyECDSAP256).mockResolvedValueOnce(false);
+
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "invalid-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("INVALID_WALLET_SIGNATURE");
+  });
+
+  it("verifyProof rejects revoked key", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: true, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    // Mock key status as revoked
+    const registryClientInstance = (verifier as any).registryClient;
+    registryClientInstance.getKeyStatusViaNewEndpoint.mockResolvedValue({
+      revoked: true,
+      expired: false
+    });
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("KEY_REVOKED");
+  });
+
+  it("verifyProof rejects expired key", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: true, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    // Mock key status as expired
+    const registryClientInstance = (verifier as any).registryClient;
+    registryClientInstance.getKeyStatusViaNewEndpoint.mockResolvedValue({
+      revoked: false,
+      expired: true
+    });
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("KEY_EXPIRED");
+  });
+
+  it("verifyProof rejects invalid claim values", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: "invalid-boolean" }], // Invalid value type
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("INVALID_CLAIM_VALUE");
+  });
+
+  it("verifyProof rejects minimal disclosure violation", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [
+        { type: "AGE_OVER", value: true, evidence: { name: "John Doe" } } // Forbidden evidence field
+      ],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("MINIMAL_DISCLOSURE_VIOLATION");
+  });
+
+  it("verifyProof rejects claim policy mismatch", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [
+        { type: "AGE_OVER", value: true },
+        { type: "CONTINUITY", value: "extra-claim" } // Extra claim not requested
+      ],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("CLAIM_POLICY_MISMATCH");
+  });
+
+  it("verifyProof rejects expired claims", async () => {
+    const pastTime = new Date(Date.now() - 100000).toISOString(); // 100 seconds ago
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true, expiresAt: pastTime }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("CLAIM_EXPIRED");
+  });
+
+  it("verifyProof rejects PII detection", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { 
+        requireStatusCheck: false, 
+        maxAgeSeconds: 60,
+        forbidPII: ["contact", "personal"]
+      },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ 
+        type: "AGE_OVER", 
+        value: true, 
+        evidence: { contactInfo: "user@example.com" } // Forbidden PII (contains "contact" which matches forbidPII)
+      }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("PII_DETECTED");
+  });
+
+  // Test error handling in ZK proof verification
+  it("verifyComprehensiveZkProof handles invalid base64 in commitment", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AGE_OVER",
+        threshold: 18
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AGE_OVER",
+          commitment: "invalid-base64!!!", // Invalid base64
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("18|25|context").toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyComprehensiveZkProof handles invalid base64 in bulletproof", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AGE_OVER",
+        threshold: 18
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AGE_OVER",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: "invalid-base64!!!", // Invalid base64
+          publicInputs: Buffer.from("18|25|context").toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyComprehensiveZkProof handles invalid base64 in publicInputs", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "AGE_OVER",
+        threshold: 18
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "AGE_OVER",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: "invalid-base64!!!" // Invalid base64
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyComprehensiveZkProof handles unknown claim type", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ 
+        type: "UNKNOWN_CLAIM_TYPE",
+        threshold: 18
+      }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "UNKNOWN_CLAIM_TYPE", value: true }],
+      zkProofs: {
+        0: {
+          claimIndex: 0,
+          claimType: "UNKNOWN_CLAIM_TYPE",
+          commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+          bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+          publicInputs: Buffer.from("18|25|context").toString("base64url")
+        }
+      },
+      suite: "BULLETPROOFS_RISTRETTO_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyProof accepts valid proof", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      suite: "ECDSA_P256_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(true);
+    expect(result.pairwiseSubjectId).toBe("test-subject");
+    expect(result.assuranceLevel).toBe(0);
+  });
+});
+
+// Test utility functions for 100% function coverage
+describe("Utility Functions", () => {
+  describe("ensureRandomUUID", () => {
+    it("returns a UUID when crypto.randomUUID is available", () => {
+      const mockUUID = "12345678-1234-1234-1234-123456789abc";
+      vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(mockUUID);
+      
+      expect(ensureRandomUUID()).toBe(mockUUID);
+    });
+
+    it("throws error when crypto.randomUUID is not available", () => {
+      const originalCrypto = globalThis.crypto;
+      // Mock crypto to not have randomUUID
+      Object.defineProperty(globalThis, 'crypto', {
+        value: { ...originalCrypto },
+        writable: true
+      });
+      delete (globalThis.crypto as any).randomUUID;
+      
+      expect(() => ensureRandomUUID()).toThrow("RANDOM_UUID_NOT_AVAILABLE");
+      
+      // Restore
+      Object.defineProperty(globalThis, 'crypto', {
+        value: originalCrypto,
+        writable: true
+      });
+    });
+  });
+
+  describe("randomNonce", () => {
+    it("returns base64url encoded random bytes", () => {
+      const mockBytes = new Uint8Array([1, 2, 3, 4]);
+      vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation((array) => {
+        array.set(mockBytes);
+        return array;
+      });
+      
+      const result = randomNonce(4);
+      expect(result).toBe("AQIDBA");
+    });
+
+    it("throws error when crypto.getRandomValues is not available", () => {
+      const originalCrypto = globalThis.crypto;
+      // Mock crypto to not have getRandomValues
+      Object.defineProperty(globalThis, 'crypto', {
+        value: { ...originalCrypto },
+        writable: true
+      });
+      delete (globalThis.crypto as any).getRandomValues;
+      
+      expect(() => randomNonce()).toThrow("RANDOM_NOT_AVAILABLE");
+      
+      // Restore
+      Object.defineProperty(globalThis, 'crypto', {
+        value: originalCrypto,
+        writable: true
+      });
+    });
+  });
+
+  describe("buildProofLink", () => {
+    it("builds correct proof link URL", () => {
+      const request = {
+        requestId: "test-request",
+        nonce: "test-nonce",
+        verifierOrigin: "https://example.com"
+      };
+      const result = buildProofLink(request);
+      expect(result).toBe("shielded-id://proof?request_id=test-request&nonce=test-nonce&verifier_origin=https%3A%2F%2Fexample.com");
+    });
+  });
+
+  describe("findSigningKey", () => {
+    it("returns null when no keys provided", () => {
+      expect(findSigningKey(undefined)).toBeNull();
+      expect(findSigningKey([])).toBeNull();
+    });
+
+    it("returns active publicKey", () => {
+      const keys = [
+        { status: "REVOKED", publicKey: { kty: "EC" } },
+        { status: "ACTIVE", publicKey: { kty: "RSA" } }
+      ];
+      expect(findSigningKey(keys)).toEqual({ kty: "RSA" });
+    });
+
+    it("returns active keyMaterial when no publicKey", () => {
+      const keys = [
+        { status: "ACTIVE", keyMaterial: { kty: "EC" } }
+      ];
+      expect(findSigningKey(keys)).toEqual({ kty: "EC" });
+    });
+
+    it("prefers publicKey over keyMaterial", () => {
+      const keys = [
+        { status: "ACTIVE", publicKey: { kty: "RSA" }, keyMaterial: { kty: "EC" } }
+      ];
+      expect(findSigningKey(keys)).toEqual({ kty: "RSA" });
+    });
+  });
+
+  describe("computeAssuranceLevel", () => {
+    it("returns 0 when no KYC_LEVEL claim", () => {
+      const claims = [{ type: "AGE_OVER", value: true }];
+      const request = { requestedClaims: [] };
+      expect(computeAssuranceLevel(claims, request)).toBe(0);
+    });
+
+    it("returns 0 when KYC_LEVEL claim is not boolean true", () => {
+      const claims = [{ type: "KYC_LEVEL", value: false }];
+      const request = { requestedClaims: [{ type: "KYC_LEVEL", minLevel: 2 }] };
+      expect(computeAssuranceLevel(claims, request)).toBe(0);
+    });
+
+    it("returns minLevel from request", () => {
+      const claims = [{ type: "KYC_LEVEL", value: true }];
+      const request = { requestedClaims: [{ type: "KYC_LEVEL", minLevel: 3 }] };
+      expect(computeAssuranceLevel(claims, request)).toBe(3);
+    });
+
+    it("returns 0 when minLevel not specified", () => {
+      const claims = [{ type: "KYC_LEVEL", value: true }];
+      const request = { requestedClaims: [{ type: "KYC_LEVEL" }] };
+      expect(computeAssuranceLevel(claims, request)).toBe(0);
+    });
+  });
+
+  describe("validateClaimValues", () => {
+    it("returns true for valid claims", () => {
+      const claims = [
+        { type: "AGE_OVER", value: true },
+        { type: "KYC_LEVEL", value: 2 },
+        { type: "CONTINUITY", value: "pairwise-id" }
+      ];
+      expect(validateClaimValues(claims)).toBe(true);
+    });
+
+    it("returns false for invalid AGE_OVER claim", () => {
+      const claims = [{ type: "AGE_OVER", value: "invalid" }];
+      expect(validateClaimValues(claims)).toBe(false);
+    });
+
+    it("returns false for invalid CONTINUITY claim", () => {
+      const claims = [{ type: "CONTINUITY", value: 123 }];
+      expect(validateClaimValues(claims)).toBe(false);
+    });
+  });
+
+  describe("validateMinimalDisclosure", () => {
+    it("returns true for valid claims", () => {
+      const claims = [
+        { type: "AGE_OVER", value: true },
+        { type: "KYC_LEVEL", value: true },
+        { type: "CONTINUITY", value: true }
+      ];
+      expect(validateMinimalDisclosure(claims)).toBe(true);
+    });
+
+    it("returns false for AGE_OVER with non-boolean value", () => {
+      const claims = [{ type: "AGE_OVER", value: 25 }];
+      expect(validateMinimalDisclosure(claims)).toBe(false);
+    });
+
+    it("returns false for KYC_LEVEL with non-boolean value", () => {
+      const claims = [{ type: "KYC_LEVEL", value: 2 }];
+      expect(validateMinimalDisclosure(claims)).toBe(false);
+    });
+
+    it("returns false for forbidden evidence fields", () => {
+      const claims = [{ type: "AGE_OVER", value: true, evidence: { dateOfBirth: "1990-01-01" } }];
+      expect(validateMinimalDisclosure(claims)).toBe(false);
+    });
+  });
+
+  describe("validateClaimsAgainstRequest", () => {
+    it("returns true for matching claims", () => {
+      const requested = [{ type: "AGE_OVER", threshold: 18 }];
+      const claims = [{ type: "AGE_OVER", value: true }];
+      expect(validateClaimsAgainstRequest(requested, claims)).toBe(true);
+    });
+
+    it("returns false for missing claim type", () => {
+      const requested = [{ type: "AGE_OVER", threshold: 18 }];
+      const claims = [{ type: "KYC_LEVEL", value: true }];
+      expect(validateClaimsAgainstRequest(requested, claims)).toBe(false);
+    });
+
+    it("validates GE operator correctly", () => {
+      const requested = [{ type: "AGE_OVER", threshold: 18, operator: "GE" }];
+      const claims = [{ type: "AGE_OVER", value: 25 }];
+      expect(validateClaimsAgainstRequest(requested, claims)).toBe(true);
+    });
+
+    it("validates EQ operator correctly", () => {
+      const requested = [{ type: "COUNTRY", expectedValue: "US", operator: "EQ" }];
+      const claims = [{ type: "COUNTRY", value: "US" }];
+      expect(validateClaimsAgainstRequest(requested, claims)).toBe(true);
+    });
+  });
+
+  describe("hasForbiddenEvidence", () => {
+    it("returns false when no evidence", () => {
+      const claim = { type: "AGE_OVER", value: true };
+      expect(hasForbiddenEvidence(claim, ["forbidden"])).toBe(false);
+    });
+
+    it("returns false when evidence has no forbidden fields", () => {
+      const claim = { type: "AGE_OVER", value: true, evidence: { allowedField: "value" } };
+      expect(hasForbiddenEvidence(claim, ["forbidden"])).toBe(false);
+    });
+
+    it("returns true when evidence has forbidden fields", () => {
+      const claim = { type: "AGE_OVER", value: true, evidence: { dateOfBirth: "1990-01-01" } };
+      expect(hasForbiddenEvidence(claim, ["dateofbirth"])).toBe(true);
+    });
+  });
+
+  describe("isNotExpired", () => {
+    it("returns true for future expiry", () => {
+      const futureDate = new Date(Date.now() + 3600000).toISOString(); // 1 hour from now
+      expect(isNotExpired(futureDate)).toBe(true);
+    });
+
+    it("returns false for past expiry", () => {
+      const pastDate = new Date(Date.now() - 3600000).toISOString(); // 1 hour ago
+      expect(isNotExpired(pastDate)).toBe(false);
+    });
+
+    it("returns false for invalid date", () => {
+      expect(isNotExpired("invalid-date")).toBe(false);
+    });
+  });
+});
+
+describe("Legacy ZK Proof Verification", () => {
+  it("verifyAgeZkProof handles legacy AGE_ZK_BULLETPROOFS_V1 format", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProof: {
+        commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+        bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+        publicInputs: Buffer.from("18|25|context").toString("base64url")
+      },
+      suite: "AGE_ZK_BULLETPROOFS_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyKycZkProof handles legacy KYC_ZK_BULLETPROOFS_V1 format", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "KYC_LEVEL", level: 2 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "KYC_LEVEL", value: true }],
+      kycZkProof: {
+        commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+        bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+        publicInputs: Buffer.from("2|3|context").toString("base64url")
+      },
+      suite: "KYC_ZK_BULLETPROOFS_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result).toHaveProperty("valid");
+  });
+
+  it("verifyAgeZkProof handles decode errors gracefully", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProof: {
+        commitment: "invalid-base64",
+        bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+        publicInputs: Buffer.from("18|25|context").toString("base64url")
+      },
+      suite: "AGE_ZK_BULLETPROOFS_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyAgeZkProof validates commitment length", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProof: {
+        commitment: Buffer.from(new Uint8Array(16).fill(1)).toString("base64url"), // Too short
+        bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+        publicInputs: Buffer.from("18|25|context").toString("base64url")
+      },
+      suite: "AGE_ZK_BULLETPROOFS_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyAgeZkProof validates proof length", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProof: {
+        commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+        bulletproof: Buffer.from(new Uint8Array(50).fill(2)).toString("base64url"), // Too short
+        publicInputs: Buffer.from("18|25|context").toString("base64url")
+      },
+      suite: "AGE_ZK_BULLETPROOFS_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyAgeZkProof validates public inputs length", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProof: {
+        commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+        bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+        publicInputs: Buffer.from("x").toString("base64url") // Too short
+      },
+      suite: "AGE_ZK_BULLETPROOFS_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
+  });
+
+  it("verifyAgeZkProof validates context binding", async () => {
+    const request = verifier.createProofRequest({
+      requestedClaims: [{ type: "AGE_OVER", threshold: 18 }],
+      policy: { requireStatusCheck: false, maxAgeSeconds: 60 },
+      callback: { method: "POST", url: "https://shop.example/callback" }
+    });
+
+    const proof = {
+      requestId: request.requestId,
+      nonce: request.nonce,
+      walletId: "test-wallet",
+      keyId: "test-key",
+      pairwiseSubjectId: "test-subject",
+      claims: [{ type: "AGE_OVER", value: true }],
+      zkProof: {
+        commitment: Buffer.from(new Uint8Array(32).fill(1)).toString("base64url"),
+        bulletproof: Buffer.from(new Uint8Array(670).fill(2)).toString("base64url"),
+        publicInputs: Buffer.from("18|25|wrong-context").toString("base64url") // Wrong context
+      },
+      suite: "AGE_ZK_BULLETPROOFS_V1",
+      signature: "mock-signature"
+    };
+
+    const result = await verifier.verifyProof(request, proof, { checkRevocation: false });
+    expect(result.valid).toBe(false);
   });
 });

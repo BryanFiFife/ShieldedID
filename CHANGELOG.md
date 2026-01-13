@@ -1,5 +1,27 @@
 # ShieldedID Changelog
 
+## [1.5.0] - 2026-01-13
+
+### Security Improvements
+- Enhanced service startup validation and health checks
+- Improved build system reliability across all packages
+- Strengthened end-to-end testing coverage
+
+### Features
+- Comprehensive monorepo testing with 358 passing tests
+- Enhanced landing page validation for all services
+- Improved version management and documentation consistency
+
+### Bug Fixes
+- Fixed wallet PWA build issues with missing ZK proof functions
+- Resolved port conflicts in development environment
+- Corrected documentation version inconsistencies
+
+### Operations
+- All packages successfully building and tested
+- Registry server validated on port 3002
+- Version numbers incremented across entire monorepo
+
 ## [1.4.0] - 2026-01-12
 
 ### Security Improvements

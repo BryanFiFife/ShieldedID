@@ -84,25 +84,22 @@ export default defineConfig({
       }
     },
     coverage: {
+      provider: 'v8',
       exclude: [
-        'src/App.tsx',
-        'src/main.tsx',
-        'src/service-worker.ts',
-        'src/store/**',
-        'src/backend/**',
-        'src/lib/chat-storage.ts',
-        'src/lib/companion.ts',
-        'src/lib/document-capture.ts',
-        'src/lib/vault-storage.ts',
-        'dist/**',
-        'coverage/**',
-        'tests/**',
+        'node_modules/',
+        'dist/',
+        'coverage/',
+        'tests/',
+        '**/*.test.ts',
+        '**/*.test.tsx',
         '**/*.d.ts'
       ],
-      statements: 85,
-      branches: 75,
-      functions: 85,
-      lines: 85
+      reporter: ['text', 'lcov', 'html'],
+      all: true,
+      statements: 90,
+      branches: 90,
+      functions: 90,
+      lines: 90
     }
   }
 });

@@ -1,7 +1,7 @@
 # Production Readiness Checklist (Shielded ID)
 
 Status: ZK-2 (native Bulletproofs agent with gated E2E coverage)  
-Last Updated: 2026-01
+Last Updated: 2026-01-13
 
 ## Cryptographic Foundations
 - Proof system: Bulletproofs over Ristretto255 with Merlin transcripts (range proof for `value >= threshold`).

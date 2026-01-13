@@ -367,6 +367,20 @@ function isNotExpired(expiresAt: string): boolean {
   return Date.now() <= expiry;
 }
 
+// Export utility functions for testing
+export {
+  ensureRandomUUID,
+  randomNonce,
+  buildProofLink,
+  findSigningKey,
+  computeAssuranceLevel,
+  validateClaimValues,
+  validateMinimalDisclosure,
+  validateClaimsAgainstRequest,
+  hasForbiddenEvidence,
+  isNotExpired
+};
+
 /** Main entry point for creating and verifying Shielded ID proofs. */
 export class ShieldedVerifier {
   private readonly origin: string;

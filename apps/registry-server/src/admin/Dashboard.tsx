@@ -47,6 +47,14 @@ interface SystemConfig {
   maintenanceMode: boolean;
 }
 
+type TabId = 'overview' | 'security' | 'performance' | 'config';
+
+interface Tab {
+  id: TabId;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
 const Dashboard: React.FC = () => {
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     totalWallets: 0,
@@ -328,14 +336,14 @@ const Dashboard: React.FC = () => {
         <div className="border-b border-gray-200">
           <nav className="-mb-px flex space-x-8">
             {[
-              { id: 'overview', label: 'Overview', icon: Activity },
-              { id: 'security', label: 'Security', icon: ShieldCheck },
-              { id: 'performance', label: 'Performance', icon: TrendingUp },
-              { id: 'config', label: 'Configuration', icon: Settings }
-            ].map((tab) => (
+              { id: 'overview' as TabId, label: 'Overview', icon: Activity },
+              { id: 'security' as TabId, label: 'Security', icon: ShieldCheck },
+              { id: 'performance' as TabId, label: 'Performance', icon: TrendingUp },
+              { id: 'config' as TabId, label: 'Configuration', icon: Settings }
+            ].map((tab: Tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center py-2 px-1 border-b-2 font-medium text-sm ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600'

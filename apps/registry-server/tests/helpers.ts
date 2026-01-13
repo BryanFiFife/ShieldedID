@@ -10,5 +10,5 @@ export async function setupTestApp() {
 
 export function resetDatabase() {
   const db = getDb();
-  db.exec("DELETE FROM audit_events; DELETE FROM backups; DELETE FROM revocations; DELETE FROM wallet_keys; DELETE FROM wallets;");
+  db.exec("DELETE FROM audit_events; DELETE FROM backups; DELETE FROM revocations; DELETE FROM wallet_keys; DELETE FROM wallets; DELETE FROM admins; DELETE FROM contact_messages;");
 }

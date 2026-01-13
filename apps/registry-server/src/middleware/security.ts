@@ -10,6 +10,17 @@ import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 
+// Extend FastifyRequest to include rate limiting properties
+declare module "fastify" {
+  interface FastifyRequest {
+    rateLimit?: {
+      limit?: number;
+      remaining?: number;
+      resetTime?: number;
+    };
+  }
+}
+
 export interface SecurityConfig {
   allowedOrigins?: string[];
   enableHSTS?: boolean;
@@ -78,10 +89,10 @@ export async function registerSecurity(app: FastifyInstance, config: SecurityCon
   // Rate Limit Headers & Cache Control
   // ============================================================
   app.addHook("onSend", async (request: FastifyRequest, reply: FastifyReply) => {
-    if ((request as any).rateLimit) {
-      reply.header("RateLimit-Limit", (request as any).rateLimit.limit?.toString());
-      reply.header("RateLimit-Remaining", ((request as any).rateLimit.remaining ?? 0).toString());
-      reply.header("RateLimit-Reset", ((request as any).rateLimit.resetTime ?? 0).toString());
+    if (request.rateLimit) {
+      reply.header("RateLimit-Limit", request.rateLimit.limit?.toString());
+      reply.header("RateLimit-Remaining", (request.rateLimit.remaining ?? 0).toString());
+      reply.header("RateLimit-Reset", (request.rateLimit.resetTime ?? 0).toString());
     }
 
     // Cache Control for sensitive endpoints

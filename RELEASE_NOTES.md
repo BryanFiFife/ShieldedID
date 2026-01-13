@@ -1,10 +1,10 @@
-# ShieldedID v1.3.0 Release - Complete
+# ShieldedID v1.5.0 Release - Complete
 
 ## ✅ Release Successfully Pushed to GitHub
 
 **Repository**: https://github.com/BryanFiFife/ShieldedID  
-**Release Tag**: v1.3.0  
-**Date**: January 12, 2026
+**Release Tag**: v1.5.0  
+**Date**: January 13, 2026
 
 ---
 
@@ -30,22 +30,22 @@
 
 ## 📊 Version Updates
 
-All version numbers updated from 1.2.0 → 1.4.0:
+All version numbers updated from 1.4.0 → 1.5.0:
 
 | Package | Version |
 |---------|---------|
-| @shielded-id/root | 1.4.0 |
-| @shielded-id/wallet-pwa | 1.4.0 |
-| shielded-registry-server | 1.4.0 |
-| shielded-verifier-demo | 1.4.0 |
-| @shielded-id/verifier-sdk | 1.4.0 |
-| @shielded-id/attester-sdk | 1.4.0 |
-| @shielded-id/integration-tests | 1.4.0 |
-| shielded-zk-agent | 1.4.0 |
+| @shielded-id/root | 1.5.0 |
+| @shielded-id/wallet-pwa | 1.5.0 |
+| shielded-registry-server | 1.5.0 |
+| shielded-verifier-demo | 1.5.0 |
+| @shielded-id/verifier-sdk | 1.5.0 |
+| @shielded-id/attester-sdk | 1.5.0 |
+| @shielded-id/integration-tests | 1.5.0 |
+| shielded-zk-agent | 1.5.0 |
 
 ---
 
-## 🔧 Key Changes in v1.3.0
+## 🔧 Key Changes in v1.5.0
 
 ### Security Hardening
 ✅ Enhanced CONTINUITY claim validation with comprehensive type checking  

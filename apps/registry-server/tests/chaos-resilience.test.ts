@@ -67,7 +67,7 @@ describe("Chaos Engineering: Shielded ID Resilience", () => {
           /password|secret|key/i
         ];
 
-        let message = "Request failed";
+        const message = "Request failed";
 
         if (sensitivePatterns.some((p) => p.test(internalError))) {
           // Contains sensitive info - return generic error

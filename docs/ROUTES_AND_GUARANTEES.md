@@ -1,7 +1,7 @@
 # Routes & Guarantees: Shielded ID API
 
 **Version:** 1.0  
-**Last Updated:** 2025
+**Last Updated:** 2026-01-13
 
 ## 1. Registry Server Routes
 

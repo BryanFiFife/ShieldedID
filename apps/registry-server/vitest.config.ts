@@ -3,25 +3,23 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
-  },
-  coverage: {
-    exclude: [
-      'public/**',
-      'dist/**',
-      'scripts/**',
-      'migrations/**',
-      'src/admin/**',
-      'src/observability/**',
-      'src/server.ts',
-      'create-admin.js',
-      'coverage/**',
-      'tests/**',
-      '**/*.d.ts'
-    ],
-    reporter: ['text', 'lcov', 'html'],
-    statements: 85,
-    branches: 80,
-    functions: 85,
-    lines: 85
+    coverage: {
+      provider: 'v8',
+      exclude: [
+        'node_modules/',
+        'dist/',
+        'coverage/',
+        'tests/',
+        '**/*.test.ts',
+        '**/*.d.ts',
+        'create-admin.js'
+      ],
+      reporter: ['text', 'lcov', 'html'],
+      all: true,
+      lines: 90,
+      functions: 90,
+      branches: 90,
+      statements: 90
+    }
   }
 })

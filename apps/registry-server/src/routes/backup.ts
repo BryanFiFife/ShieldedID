@@ -81,7 +81,8 @@ export async function registerBackupRoutes(app: FastifyInstance) {
 
         reply.code(201).send({ backupId, createdAt });
       } catch (error) {
-        app.log.error({ err: error, walletId: (request.body as any)?.walletId }, "Backup creation failed");
+        const body = request.body as typeof backupSchema._type;
+        app.log.error({ err: error, walletId: body?.walletId }, "Backup creation failed");
         throw error; // Let the error handler in validation.ts handle it
       }
     }

@@ -14,9 +14,11 @@ interface WalletStore {
   currentFlow: "enrollment" | "idle" | "proof" | "settings" | "companion";
   safetyModeEnabled: boolean;
   decoyModeActive: boolean;
+  initState: "loading" | "unlock" | "enroll" | "ready";
   setFlow: (flow: WalletStore["currentFlow"]) => void;
   setSafetyMode: (enabled: boolean) => void;
   toggleDecoyMode: (enabled: boolean) => void;
+  setInitState: (state: WalletStore["initState"]) => void;
   createDecoyVault: (pin: string) => Promise<void>;
   unlockVault: (passphrase: string) => Promise<void>;
   enrollWallet: (passphrase: string, document: VaultPayload["profile"]) => Promise<void>;
@@ -77,8 +79,10 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   currentFlow: "idle",
   safetyModeEnabled: true,
   decoyModeActive: false,
+  initState: "loading",
   setFlow: (flow) => set({ currentFlow: flow }),
   setSafetyMode: (enabled) => set({ safetyModeEnabled: enabled }),
+  setInitState: (state) => set({ initState: state }),
   toggleDecoyMode: (enabled) => set({ decoyModeActive: enabled, vaultLocked: true, vaultPayload: null }),
   createDecoyVault: async (pin) => {
     const payload: VaultPayload = {

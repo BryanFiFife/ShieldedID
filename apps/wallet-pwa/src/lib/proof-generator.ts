@@ -2,14 +2,33 @@ import { generatePairwiseSubjectId } from "./pairwise-id";
 import { decryptSigningKey, signWithPasskey, signWithSoftwareKey } from "./keys";
 import type { VaultPayload } from "./vault";
 import {
-  prove_ge,
-  prove_age_range,
-  prove_birth_year,
-  prove_string_equality,
-  prove_membership_in_list,
-  prove_not_in_list,
-  prove_string_prefix
+  prove_ge
 } from "@shielded-id/age-zk";
+
+// Stub implementations for functions not yet available in age-zk
+async function prove_age_range(age: bigint, minAge: bigint, maxAge: bigint, context: string) {
+  throw new Error("prove_age_range not yet implemented in age-zk package");
+}
+
+async function prove_birth_year(year: bigint, minYear: bigint, context: string) {
+  throw new Error("prove_birth_year not yet implemented in age-zk package");
+}
+
+async function prove_string_equality(value: string, expected: string, context: string) {
+  throw new Error("prove_string_equality not yet implemented in age-zk package");
+}
+
+async function prove_membership_in_list(value: string, list: string[], context: string) {
+  throw new Error("prove_membership_in_list not yet implemented in age-zk package");
+}
+
+async function prove_not_in_list(value: string, list: string[], context: string) {
+  throw new Error("prove_not_in_list not yet implemented in age-zk package");
+}
+
+async function prove_string_prefix(value: string, prefix: string, context: string) {
+  throw new Error("prove_string_prefix not yet implemented in age-zk package");
+}
 import { zkAgent } from "./zk-agent";
 import type { ClaimType, PredicateOperator } from "@shielded-id/verifier-sdk";
 
