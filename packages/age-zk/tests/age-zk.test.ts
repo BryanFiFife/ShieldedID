@@ -42,5 +42,4 @@ describe("Age ZK Proof", () => {
     // Test that proofs are bound to specific nonce/expiry
     expect(true).toBe(true); // Placeholder
   });
-});</content>
-<parameter name="filePath">c:\Users\bryan\Desktop\ZKDigitalID\packages\age-zk\tests\age-zk.test.ts
+});

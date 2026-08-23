@@ -10,6 +10,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bulletproofs = "3.0.1"
+# no_cc: pure-Rust fallback so the crate builds for wasm32 without a C-to-Wasm
+# compiler (clang) on the build machine; behaviour is unchanged.
+clear_on_drop = { version = "0.2", features = ["no_cc"] }
 curve25519-dalek-ng = "3.0"
 merlin = "2.0"
 rand = "0.7"

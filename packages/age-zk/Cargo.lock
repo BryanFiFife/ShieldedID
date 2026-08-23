@@ -317,10 +317,11 @@ dependencies = [
 
 [[package]]
 name = "shielded-age-zk"
-version = "0.1.0"
+version = "1.5.0"
 dependencies = [
  "base64",
  "bulletproofs",
+ "clear_on_drop",
  "console_error_panic_hook",
  "curve25519-dalek-ng",
  "js-sys",

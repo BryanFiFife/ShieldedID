@@ -59,8 +59,20 @@ describe("proof generator", () => {
   });
 
   it("uses ZK agent for age proof when available", async () => {
-    // Mock ZK agent as available
-    vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(true);
+      // Pin the system clock so computeAge() is deterministic regardless of
+      // when the suite runs (DOB 1990-05-15 -> age 36 after 2026-05-15).
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-01T12:00:00Z"));
+      try {
+        return await testUsesZkAgent();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    async function testUsesZkAgent() {
+      // Mock ZK agent as available
+      vi.mocked(zkAgent.isAgentAvailable).mockResolvedValue(true);
     vi.mocked(zkAgent.generateAgeProof).mockResolvedValue({
       commitment: "zk-commitment",
       proof: "zk-proof",
@@ -98,7 +110,7 @@ describe("proof generator", () => {
 
     expect(zkAgent.isAgentAvailable).toHaveBeenCalled();
     expect(zkAgent.generateAgeProof).toHaveBeenCalledWith(
-      35, // computed age (current year 2026 - 1990 = 36, but date is May 15, so not yet 36)
+      36, // pinned clock: 2026-06-01 minus DOB 1990-05-15
       "https://shop.example",
       "nonce-1",
       "2024-12-31T23:59:59Z"
@@ -107,7 +119,7 @@ describe("proof generator", () => {
     expect(response.zkProofs).toBeDefined();
     expect(response.zkProofs[0]).toBeDefined();
     expect(response.zkProofs[0].claimType).toBe("AGE_OVER");
-  });
+  }
 
   it("falls back to WASM when ZK agent fails", async () => {
     // Mock ZK agent as available but proof generation fails

@@ -14,6 +14,10 @@ out/
 *.jsx
 !src/**/*.js
 !public/**/*.js
+# Compiled WASM glue is committed on purpose (packages/age-zk/pkg/) so
+# consumers resolve the entry point without a Rust toolchain:
+!packages/age-zk/pkg/**/*.js
+!packages/age-zk/pkg/**/*.wasm
 
 # Rust
 target/

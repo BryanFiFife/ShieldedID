@@ -3,13 +3,13 @@
   "version": "1.5.0",
   "description": "Zero-knowledge age proof WASM module",
   "license": "Apache-2.0",
-  "main": "./pkg/index.js",
-  "types": "./pkg/index.d.ts",
+  "main": "./pkg/shielded_age_zk.js",
+  "types": "./pkg/shielded_age_zk.d.ts",
   "exports": {
     ".": {
-      "import": "./pkg/index.js",
-      "require": "./pkg/index.js",
-      "types": "./pkg/index.d.ts"
+      "import": "./pkg/shielded_age_zk.js",
+      "require": "./pkg/shielded_age_zk.js",
+      "types": "./pkg/shielded_age_zk.d.ts"
     }
   },
   "scripts": {
