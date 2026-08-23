@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+# Cancel superseded runs on the same ref to save minutes
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build the age-zk WASM from Rust sources on every push. If this job
+  # fails, the committed pkg/ artefacts can no longer be reproduced and
+  # consumers would break — exactly the v1.5.0 release defect.
+  build-wasm:
+    name: Build age-zk WASM
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/age-zk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/age-zk
+
+      - name: Build WASM (wasm-pack)
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - name: Build crate
+        run: wasm-pack build --target web --out-dir pkg
+
+      - name: Fail if committed pkg/ is stale or missing files
+        run: |
+          missing=0
+          for f in shielded_age_zk.js shielded_age_zk_bg.wasm shielded_age_zk.d.ts package.json; do
+            if [ ! -f "pkg/$f" ]; then
+              echo "::error::pkg/$f was not produced by the build"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Smoke-test the compiled module in Node
+        run: |
+          cat > /tmp/roundtrip.mjs <<'EOF'
+          import { readFile } from 'node:fs/promises';
+          const { default: init, prove_ge, verify_ge } = await import('./pkg/shielded_age_zk.js');
+          await init({ module_or_path: await readFile('./pkg/shielded_age_zk_bg.wasm') });
+          const ctx = 'ci-roundtrip';
+          const bundle = prove_ge(21n, 18n, ctx);
+          if (verify_ge(bundle, 18n, ctx) !== true) throw new Error('valid proof failed verification');
+          if (verify_ge(bundle, 25n, ctx) !== false) throw new Error('wrong threshold unexpectedly verified');
+          const tampered = { commitment: bundle.commitment, proof: Uint8Array.from(bundle.proof), public_inputs: bundle.public_inputs };
+          tampered.proof[0] ^= 0xff;
+          if (verify_ge(tampered, 18n, ctx) !== false) throw new Error('tampered proof unexpectedly verified');
+          console.log('WASM round-trip OK');
+          EOF
+          node /tmp/roundtrip.mjs
+
+      # The committed artefacts must match a clean build byte-for-byte.
+      # Deterministic thanks to the pinned Cargo.lock; fails when someone
+      # edits Rust sources or src/index.ts without rebuilding/re-committing pkg/.
+      - name: Check committed pkg/ matches fresh build
+        run: |
+          bail=0
+          for f in shielded_age_zk.js shielded_age_zk_bg.wasm; do
+            if ! cmp -s "pkg/$f" "../../packages/age-zk/pkg/$f"; then
+              echo "::error::committed packages/age-zk/pkg/$f is stale or missing — rebuild with: pnpm --filter @shielded-id/age-zk build && git add packages/age-zk/pkg"
+              bail=1
+            fi
+          done
+          exit $bail
+
+  test-linux:
+    name: Tests (Linux, Node 20)
+    runs-on: ubuntu-latest
+    needs: build-wasm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Unit suites for every workspace package (integration-tests needs a
+      # booted stack + Playwright browsers; covered by its own job).
+      - name: Run unit suites
+        run: pnpm -r --filter=!shielded-integration-tests --filter=!shielded-verifier-demo test
+
+      - name: Node backend boots against committed WASM (ESM named imports)
+        run: |
+          cd apps/verifier-demo
+          npx tsx src/backend/callback.ts &
+          SERVER_PID=$!
+          sleep 8
+          curl -fsS http://localhost:5050/ > /dev/null || {
+            echo "::error::verifier backend failed to boot (named-import/WASM resolution regression?)"
+            kill $SERVER_PID 2>/dev/null
+            exit 1
+          }
+          kill $SERVER_PID 2>/dev/null
+          echo "backend boot OK"
+
+  test-windows:
+    name: Tests (Windows, Node 20)
+    runs-on: windows-latest
+    needs: build-wasm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit suites
+        shell: bash
+        run: pnpm -r --filter=!shielded-integration-tests --filter=!shielded-verifier-demo test
+
+      - name: Node backend boots against committed WASM
+        shell: bash
+        run: |
+          cd apps/verifier-demo
+          npx tsx src/backend/callback.ts &
+          SERVER_PID=$!
+          sleep 8
+          curl -fsS http://localhost:5050/ > /dev/null || {
+            echo "::error::verifier backend failed to boot"
+            kill $SERVER_PID 2>/dev/null
+            exit 1
+          }
+          kill $SERVER_PID 2>/dev/null
+          echo "backend boot OK"
