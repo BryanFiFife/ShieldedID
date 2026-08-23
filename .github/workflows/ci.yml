@@ -55,15 +55,15 @@ jobs:
         run: |
           cat > roundtrip.test.mjs <<'EOF'
           import { readFile } from 'node:fs/promises';
-          const { default: init, prove_ge, verify_ge } = await import('./pkg/shielded_age_zk.js');
+          const { default: init, prove_ge, verify_ge, verify_ge_components } = await import('./pkg/shielded_age_zk.js');
           await init({ module_or_path: await readFile('./pkg/shielded_age_zk_bg.wasm') });
           const ctx = 'ci-roundtrip';
           const bundle = prove_ge(21n, 18n, ctx);
           if (verify_ge(bundle, 18n, ctx) !== true) throw new Error('valid proof failed verification');
           if (verify_ge(bundle, 25n, ctx) !== false) throw new Error('wrong threshold unexpectedly verified');
-          const tampered = { commitment: bundle.commitment, proof: Uint8Array.from(bundle.proof), public_inputs: bundle.public_inputs };
-          tampered.proof[0] ^= 0xff;
-          if (verify_ge(tampered, 18n, ctx) !== false) throw new Error('tampered proof unexpectedly verified');
+          const tamperedProof = Uint8Array.from(bundle.proof);
+          tamperedProof[0] ^= 0xff;
+          if (verify_ge_components(bundle.commitment, tamperedProof, bundle.public_inputs, 18n, ctx) !== false) throw new Error('tampered proof unexpectedly verified');
           console.log('WASM round-trip OK');
           EOF
           node roundtrip.test.mjs && rm roundtrip.test.mjs
