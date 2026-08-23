@@ -53,7 +53,7 @@ jobs:
 
       - name: Smoke-test the compiled module in Node
         run: |
-          cat > /tmp/roundtrip.mjs <<'EOF'
+          cat > roundtrip.test.mjs <<'EOF'
           import { readFile } from 'node:fs/promises';
           const { default: init, prove_ge, verify_ge } = await import('./pkg/shielded_age_zk.js');
           await init({ module_or_path: await readFile('./pkg/shielded_age_zk_bg.wasm') });
@@ -66,7 +66,7 @@ jobs:
           if (verify_ge(tampered, 18n, ctx) !== false) throw new Error('tampered proof unexpectedly verified');
           console.log('WASM round-trip OK');
           EOF
-          node /tmp/roundtrip.mjs
+          node roundtrip.test.mjs && rm roundtrip.test.mjs
 
       # The committed artefacts must match a clean build byte-for-byte.
       # Deterministic thanks to the pinned Cargo.lock; fails when someone
