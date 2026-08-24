@@ -1,276 +1,77 @@
-# Shielded ID Compliance Overview
-
-**Version**: 1.5.0
-**Last Updated**: January 13, 2026
-**Compliance Status**: 100% Complete
-
-## Executive Summary
-
-Shielded ID implements comprehensive security and compliance controls across multiple regulatory frameworks. This document provides an overview of compliance achievements and references detailed implementation mappings.
-
-## Compliance Coverage Matrix
-
-| Framework | Coverage | Status | Documentation |
-|-----------|----------|--------|---------------|
-| **OWASP Top 10** | 100% | ✅ Complete | [OWASP Mapping](docs/security/owasp-mapping.md) |
-| **ISO 27001** | 100% | ✅ Complete | [ISO 27001 Mapping](docs/compliance/iso27001-mapping.md) |
-| **GDPR** | 100% | ✅ Complete | [GDPR Compliance](#gdpr-compliance) |
-| **CCPA** | 100% | ✅ Complete | [CCPA Compliance](#ccpa-compliance) |
-| **NIST Cybersecurity** | 95% | 🟡 Nearly Complete | [NIST Mapping](#nist-cybersecurity-framework) |
-
-## OWASP Top 10 Compliance
-
-Shielded ID addresses all OWASP Top 10 2021 vulnerabilities:
-
-### ✅ A01:2021 - Broken Access Control
-- **Pairwise Subject IDs** prevent unauthorized access correlation
-- **Registry-based authorization** with cryptographic verification
-- **Context binding** prevents CSRF and authorization bypass
-
-### ✅ A02:2021 - Cryptographic Failures
-- **FIPS-compliant cryptography** (ECDSA P-256, SHA-256)
-- **Bulletproofs ZK proofs** for privacy-preserving verification
-- **TLS 1.3 mandatory** for all communications
-
-### ✅ A03:2021 - Injection
-- **Parameterized database queries** prevent SQL injection
-- **Input validation** with strict schema enforcement
-- **No dynamic query generation**
-
-### ✅ A04:2021 - Insecure Design
-- **Zero-trust architecture** with cryptographic guarantees
-- **Privacy-by-design** principles throughout
-- **Minimal attack surface** design
-
-### ✅ A05:2021 - Security Misconfiguration
-- **Secure defaults** with automated validation
-- **Configuration scanning** in CI/CD pipeline
-- **Immutable infrastructure** patterns
-
-### ✅ A06:2021 - Vulnerable Components
-- **Automated dependency scanning** and updates
-- **Container security scanning** with vulnerability assessment
-- **Minimal dependency footprint**
-
-### ✅ A07:2021 - Identification/Authentication Failures
-- **Cryptographic authentication** using public key cryptography
-- **Revocation checking** prevents use of compromised credentials
-- **Replay protection** with nonce-based mechanisms
-
-### ✅ A08:2021 - Software/Data Integrity Failures
-- **Digital signatures** on all proofs and registry entries
-- **Cryptographic audit trails** with integrity verification
-- **Code signing** for all releases
-
-### ✅ A09:2021 - Security Logging/Monitoring Failures
-- **Comprehensive audit logging** with integrity protection
-- **Real-time security monitoring** and alerting
-- **Log aggregation** and analysis capabilities
-
-### ✅ A10:2021 - Server-Side Request Forgery
-- **Client-side architecture** eliminates server-side requests
-- **No URL processing** on server side
-- **Network segmentation** and access controls
-
-**Detailed Mapping**: See [OWASP Top 10 Implementation](docs/security/owasp-mapping.md)
-
-## ISO 27001 Compliance
-
-Shielded ID implements 100% of ISO 27001:2022 controls:
-
-### ✅ Information Security Policies (A.5)
-- Comprehensive security policy documentation
-- Regular policy review and update procedures
-- Security objective setting and measurement
-
-### ✅ Organization of Information Security (A.6)
-- Clear security roles and responsibilities
-- Segregation of duties in development and operations
-- Contact procedures for security incidents
-
-### ✅ Human Resource Security (A.7)
-- Security awareness training programs
-- Background checks and security screening
-- Access revocation procedures for termination
-
-### ✅ Asset Management (A.8) - 100% Complete
-- Asset inventory and classification procedures
-- Information labeling and handling requirements
-- Media handling and disposal procedures
-
-### ✅ Access Control (A.9)
-- Role-based access control implementation
-- User access management and provisioning
-- System and application access controls
-
-### ✅ Cryptography (A.10)
-- Cryptographic key management procedures
-- Secure key generation and distribution
-- Key lifecycle management (generation, storage, destruction)
-
-### 🟡 Physical Security (A.11) - 90% Complete
-- Physical security perimeter controls
-- Physical entry control procedures
-- Secure disposal of equipment and media
-
-### ✅ Operations Security (A.12)
-- Operational procedures and responsibilities
-- Protection from malware and malicious code
-- Backup and incident response procedures
-
-### ✅ Communications Security (A.13)
-- Network security management and controls
-- Information transfer policies and procedures
-- Secure development and support processes
-
-### ✅ System Acquisition/Development (A.14) - 100% Complete
-- Security requirements in development lifecycle
-- Secure coding practices and code reviews
-- Test data protection and management
-
-### ✅ Supplier Relationships (A.15)
-- Supplier security assessment procedures
-- Supply chain information security requirements
-- Monitoring and review of supplier services
-
-### ✅ Information Security Incident Management (A.16)
-- Incident response procedures and communication
-- Business continuity and disaster recovery planning
-- Information security aspects of business continuity
-
-### 🟡 Business Continuity Management (A.17) - 85% Complete
-- Business continuity strategy and procedures
-- Business impact analysis and risk assessment
-- Testing and maintenance of continuity plans
-
-### ✅ Compliance (A.18)
-- Compliance with legal and regulatory requirements
-- Intellectual property protection
-- Protection of records and privacy
-
-**Detailed Mapping**: See [ISO 27001 Implementation](docs/compliance/iso27001-mapping.md)
-
-## GDPR Compliance
-
-Shielded ID is fully compliant with GDPR requirements:
-
-### Lawful Basis
-- **Consent**: Explicit user consent for credential usage
-- **Legitimate Interest**: Identity verification necessary for service provision
-- **Contract**: Performance of contractual obligations
-
-### Data Subject Rights
-- **Right to Access**: Users can access their registered credentials
-- **Right to Rectification**: Users can update credential information
-- **Right to Erasure**: Key revocation effectively removes user data
-- **Right to Portability**: Credentials exportable in standard formats
-- **Right to Object**: Users can withdraw consent and revoke credentials
-
-### Data Protection Principles
-- **Lawfulness, Fairness, Transparency**: Clear privacy notices and consent mechanisms
-- **Purpose Limitation**: Data collected only for identity verification
-- **Data Minimization**: Only cryptographic keys and minimal metadata stored
-- **Accuracy**: Cryptographic verification ensures data accuracy
-- **Storage Limitation**: Automatic data deletion on credential expiry
-- **Integrity and Confidentiality**: End-to-end encryption and cryptographic protection
-- **Accountability**: Comprehensive audit logging and compliance monitoring
-
-### Data Processing Security
-- **Technical Measures**: Encryption, access controls, integrity verification
-- **Organizational Measures**: Security policies, training, incident response
-- **Contractual Measures**: Data processing agreements with subprocessors
-
-## CCPA Compliance
-
-Shielded ID fully implements CCPA requirements:
-
-### Personal Information Collection
-- **Categories Collected**: Identifiers (public keys), protected classifications (age verification)
-- **Business Purpose**: Identity verification for age-restricted services
-- **Data Retention**: Minimal retention with automatic deletion
-
-### Data Subject Rights
-- **Right to Know**: Clear privacy notices explaining data usage
-- **Right to Delete**: Immediate data deletion via credential revocation
-- **Right to Opt-Out**: Global opt-out through credential revocation
-- **Right to Non-Discrimination**: No penalty for exercising privacy rights
-
-### Data Protection Measures
-- **Security Safeguards**: Encryption, access controls, audit logging
-- **Service Provider Oversight**: Regular security assessments of vendors
-- **Incident Response**: 72-hour breach notification procedures
-
-## NIST Cybersecurity Framework
-
-Shielded ID implements 95% of NIST CSF controls:
-
-### Identify (ID)
-- **Asset Management**: Comprehensive asset inventory and classification
-- **Risk Assessment**: Regular risk assessments and vulnerability scanning
-- **Supply Chain Risk Management**: Third-party risk assessment procedures
-
-### Protect (PR)
-- **Access Control**: Role-based access control and identity management
-- **Data Security**: Encryption and data protection measures
-- **Maintenance**: Regular system maintenance and patch management
-- **Protective Technology**: Security technologies and tools implementation
-
-### Detect (DE)
-- **Anomalies and Events**: Continuous monitoring and anomaly detection
-- **Security Continuous Monitoring**: Real-time security monitoring
-- **Detection Processes**: Automated detection and alerting procedures
-
-### Respond (RS)
-- **Response Planning**: Incident response procedures and communication plans
-- **Communications**: Incident communication and coordination procedures
-- **Analysis**: Incident analysis and impact assessment
-- **Mitigation**: Incident mitigation and recovery procedures
-
-### Recover (RC)
-- **Recovery Planning**: Business continuity and disaster recovery plans
-- **Improvements**: Post-incident reviews and improvement procedures
-- **Communications**: Recovery communication and coordination
-
-## Compliance Monitoring and Auditing
-
-### Automated Monitoring
-- **Continuous Compliance Scanning**: Automated checks against compliance requirements
-- **Security Control Validation**: Regular testing of security controls
-- **Audit Log Analysis**: Automated review of audit logs for compliance violations
-
-### Regular Assessments
-- **Annual Compliance Audits**: Comprehensive third-party compliance assessments
-- **Quarterly Control Testing**: Validation of key security controls
-- **Monthly Vulnerability Scans**: Automated vulnerability assessment and remediation
-
-### Remediation Procedures
-- **Issue Tracking**: Formal process for tracking compliance issues
-- **Remediation Planning**: Defined timelines and responsibilities for fixes
-- **Verification**: Post-remediation validation of fixes
-
-## Roadmap to 100% Compliance
-
-### Short-term (Q1 2026)
-- Complete physical security control implementation
-- Enhance business continuity planning documentation
-- Implement advanced access control monitoring
-
-### Medium-term (Q2-Q3 2026)
-- Achieve ISO 27001 certification
-- Complete NIST CSF implementation
-- Implement advanced threat detection capabilities
-
-### Long-term (2026+)
-- Continuous compliance monitoring enhancement
-- Advanced regulatory reporting automation
-- Multi-framework compliance dashboard
-
-## Conclusion
-
-Shielded ID demonstrates strong compliance across major regulatory frameworks with 100% overall compliance coverage. The system includes comprehensive security controls, automated monitoring, and clear procedures for maintaining compliance. All ISO 27001 controls are fully implemented through a combination of direct implementation and cloud provider security controls.
-
-**Overall Compliance Posture**: 🟢 **EXCELLENT** - 100% compliance coverage with comprehensive security controls and production-ready implementation.
-
----
-
-*For detailed implementation mappings, see the referenced documents in the compliance matrix above.*
+# Shielded ID Compliance and Control Notes
+
+**Applies to:** v1.6 hardened protocol
+
+This document describes security/privacy-relevant controls present in the Shielded ID codebase. It is **not a certification, legal opinion, conformity assessment, or statement that any deployment is automatically compliant with a regulatory framework**.
+
+Compliance is an organisational and deployment property. It depends on matters the repository cannot determine, including controller/processor roles, lawful basis, notices, data retention, hosting, access governance, incident management, staff practices, contracts, risk assessment and jurisdiction.
+
+## Current technical controls
+
+| Area | Implemented technical control | Boundary |
+| --- | --- | --- |
+| Data minimisation | Age and KYC threshold proofs do not send the raw numeric witness | Issuer commitment metadata and cryptographic proof material still exist and must be assessed by the operator |
+| Credential provenance | Issuer P-256 signature over the commitment attestation | Trust in the issuer and its enrolment process is deployment-specific |
+| Wallet authentication | Dedicated P-256 proof-signing key registered with the registry | Key protection and device compromise remain operational risks |
+| Replay resistance | Verifier origin, nonce and expiry are bound into proof context | Verifiers must create fresh nonces and keep accurate time |
+| Revocation | Registry tracks wallet and issuer key state; verifier checks current state | Registry availability is required for the default fail-closed verification path |
+| Local confidentiality | AES-256-GCM encrypted vault with Argon2id-derived key | Passphrase quality and endpoint security remain user/operator responsibilities |
+| Auditability | Registry records wallet/status/revocation and issuer-key lifecycle events | Log retention, monitoring and access controls are deployment responsibilities |
+| Input handling | Fastify JSON schemas/Zod validation and parameterised SQLite queries | Application-level validation does not replace infrastructure hardening |
+| Generated-code integrity | CI rebuilds Rust/WASM and rejects a stale committed generated package | Supply-chain and runner trust still require normal CI governance |
+
+## ISO/IEC 27001
+
+The project is **not ISO/IEC 27001 certified**. ISO/IEC 27001 is an information security management system standard that covers organisational governance well beyond application code. A source repository cannot self-declare certification by counting controls.
+
+Technical features in this repository may contribute evidence to an organisation's risk treatment and control implementation, particularly around cryptography, access control, logging, secure development and key lifecycle. An organisation seeking certification would still need an appropriately scoped ISMS, risk assessment, Statement of Applicability, policies, operational evidence and an accredited certification process.
+
+The previous repository claim of “100% ISO 27001:2022 / 114 controls” has been removed. That wording also conflated control sets from different editions/structures of the standard.
+
+## GDPR / UK GDPR
+
+Shielded ID is designed to reduce disclosure of identity attributes, but the codebase is **not automatically GDPR or UK GDPR compliant**. A deployer should determine, among other things:
+
+- whether proof/registry identifiers are personal data or pseudonymous data in its context;
+- controller and processor roles;
+- Article 6 lawful basis and any Article 9 implications;
+- transparency information and data-subject rights handling;
+- retention/deletion periods for registry and audit data;
+- DPIA requirements, especially for identity/age/KYC decisions;
+- international transfer and processor/subprocessor arrangements;
+- security measures appropriate to risk;
+- incident and breach-response procedures.
+
+Cryptographic minimisation can reduce the data exposed to a verifier, but it does not by itself remove all data-protection obligations.
+
+## CCPA / CPRA and other privacy regimes
+
+No blanket CCPA/CPRA compliance claim is made. A deploying business must classify the data and parties involved, determine applicable consumer rights and notices, and implement the operational processes required by the law that applies to it.
+
+## NIST / OWASP
+
+The repository uses practices that overlap with guidance from NIST and OWASP, including cryptographic verification, replay controls, strict input validation, parameterised database access, key revocation, rate limiting and security-focused CI. This is **alignment with individual practices, not a NIST or OWASP certification or percentage score**.
+
+A deployment should still perform threat modelling, dependency/vulnerability management, infrastructure hardening, secrets management, penetration testing, logging/alerting and incident-response exercises appropriate to its risk profile.
+
+## Security assessment status
+
+Passing the project's CI proves that the checked behaviours and build gates passed for that commit. It does not prove absence of vulnerabilities.
+
+Before high-risk or regulated production use, recommended external assurance includes:
+
+- independent cryptographic review of the issuer-bound Bulletproof construction and transcript/context design;
+- application security review and penetration testing of wallet, registry and verifier integrations;
+- dependency and supply-chain review;
+- privacy/legal assessment for the intended jurisdictions and use cases;
+- operational controls review for issuer onboarding, key custody, registry availability, logging and incident response.
+
+## Privacy limitation: correlation
+
+Verifier-specific pairwise subject IDs prevent simple reuse of the same subject identifier across origins. However, the current issuer signature covers a persistent Pedersen commitment. If the same commitment is presented to colluding verifiers, it may act as a correlation handle. Therefore Shielded ID v1.6 does **not** claim full anonymous-credential unlinkability.
+
+A future protocol seeking that property should use an appropriately reviewed rerandomizable credential/signature construction.
+
+## Change-control requirement
+
+Compliance/security documentation must track the actual implementation. CI tests and this document should be updated whenever the proof suite, credential format, registry trust model or supported predicates change. Marketing statements must not upgrade a technical control into a certification claim without independent evidence.
