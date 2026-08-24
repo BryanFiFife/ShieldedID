@@ -1,22 +1,8 @@
 let wasm;
 
-function _assertClass(instance, klass) {
-    if (!(instance instanceof klass)) {
-        throw new Error(`expected instance of ${klass.name}`);
-    }
-}
-
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
-}
-
-let cachedDataViewMemory0 = null;
-function getDataViewMemory0() {
-    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
-        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
-    }
-    return cachedDataViewMemory0;
 }
 
 function getStringFromWasm0(ptr, len) {
@@ -164,58 +150,79 @@ export class ProofBundle {
 if (Symbol.dispose) ProofBundle.prototype[Symbol.dispose] = ProofBundle.prototype.free;
 
 /**
- * Initialize WASM panic handling
+ * @param {string} value
+ * @returns {Uint8Array}
  */
-export function main() {
-    wasm.main();
-}
-
-/**
- * Prove age is within range: min_age <= age <= max_age
- * @param {bigint} age
- * @param {bigint} min_age
- * @param {bigint} max_age
- * @param {string} context
- * @returns {ProofBundle}
- */
-export function prove_age_range(age, min_age, max_age, context) {
-    const ptr0 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+export function base64url_decode(value) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_age_range(age, min_age, max_age, ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    const ret = wasm.base64url_decode(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
     }
-    return ProofBundle.__wrap(ret[0]);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 /**
- * Prove birth year >= min_year
- * @param {bigint} birth_year
- * @param {bigint} min_year
- * @param {string} context
- * @returns {ProofBundle}
+ * @param {Uint8Array} bytes
+ * @returns {string}
  */
-export function prove_birth_year(birth_year, min_year, context) {
-    const ptr0 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_birth_year(birth_year, min_year, ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+export function base64url_encode(bytes) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.base64url_encode(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
-    return ProofBundle.__wrap(ret[0]);
 }
 
 /**
- * Generate a zero-knowledge range proof that value >= min using Bulletproofs
+ * Commit to a numeric value using a caller-supplied 32-byte blinding secret.
+ * The blinding secret must be generated with a CSPRNG and kept private.
+ * @param {bigint} value
+ * @param {Uint8Array} blinding
+ * @returns {Uint8Array}
+ */
+export function commit_value(value, blinding) {
+    const ptr0 = passArray8ToWasm0(blinding, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.commit_value(value, ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * Prove that the source commitment opens to a value >= min.
+ * The Bulletproof covers delta = value - min. The range-proof commitment is
+ * algebraically tied to the source commitment, preventing substitution of an
+ * unrelated in-range witness. Raw values never enter public inputs.
  * @param {bigint} value
  * @param {bigint} min
  * @param {string} context
+ * @param {Uint8Array} blinding
+ * @param {Uint8Array} entropy
  * @returns {ProofBundle}
  */
-export function prove_ge(value, min, context) {
+export function prove_ge_bound(value, min, context, blinding, entropy) {
     const ptr0 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_ge(value, min, ptr0, len0);
+    const ptr1 = passArray8ToWasm0(blinding, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(entropy, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.prove_ge_bound(value, min, ptr0, len0, ptr1, len1, ptr2, len2);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -223,20 +230,24 @@ export function prove_ge(value, min, context) {
 }
 
 /**
- * Prove membership in list (EU resident, endorsed, etc)
- * @param {string} value
- * @param {string} list
+ * Prove that the source commitment opens to a value <= max.
+ * The proof covers delta = max - value with the negated source blinding, so
+ * the verifier can enforce C_delta == max*B - C_source.
+ * @param {bigint} value
+ * @param {bigint} max
  * @param {string} context
+ * @param {Uint8Array} blinding
+ * @param {Uint8Array} entropy
  * @returns {ProofBundle}
  */
-export function prove_membership_in_list(value, list, context) {
-    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+export function prove_le_bound(value, max, context, blinding, entropy) {
+    const ptr0 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(list, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr1 = passArray8ToWasm0(blinding, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr2 = passArray8ToWasm0(entropy, wasm.__wbindgen_malloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_membership_in_list(ptr0, len0, ptr1, len1, ptr2, len2);
+    const ret = wasm.prove_le_bound(value, max, ptr0, len0, ptr1, len1, ptr2, len2);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -244,78 +255,31 @@ export function prove_membership_in_list(value, list, context) {
 }
 
 /**
- * Prove NOT membership in list (no restrictions, etc)
- * @param {string} value
- * @param {string} forbidden_list
- * @param {string} context
- * @returns {ProofBundle}
+ * @param {Uint8Array} public_inputs
+ * @returns {Uint8Array}
  */
-export function prove_not_in_list(value, forbidden_list, context) {
-    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+export function source_commitment_from_public_inputs(public_inputs) {
+    const ptr0 = passArray8ToWasm0(public_inputs, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(forbidden_list, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_not_in_list(ptr0, len0, ptr1, len1, ptr2, len2);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    const ret = wasm.source_commitment_from_public_inputs(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
     }
-    return ProofBundle.__wrap(ret[0]);
-}
-
-/**
- * Prove string equality (country, state, doc_type, etc)
- * @param {string} value
- * @param {string} expected
- * @param {string} context
- * @returns {ProofBundle}
- */
-export function prove_string_equality(value, expected, context) {
-    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(expected, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_string_equality(ptr0, len0, ptr1, len1, ptr2, len2);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ProofBundle.__wrap(ret[0]);
-}
-
-/**
- * Prove string prefix match (postal code prefix, region, etc)
- * @param {string} full_string
- * @param {string} prefix
- * @param {string} context
- * @returns {ProofBundle}
- */
-export function prove_string_prefix(full_string, prefix, context) {
-    const ptr0 = passStringToWasm0(full_string, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_string_prefix(ptr0, len0, ptr1, len1, ptr2, len2);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ProofBundle.__wrap(ret[0]);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 /**
  * @param {Uint8Array} commitment
  * @param {Uint8Array} proof
  * @param {Uint8Array} public_inputs
- * @param {bigint} min_age
- * @param {bigint} max_age
+ * @param {bigint} min
  * @param {string} context
+ * @param {Uint8Array} entropy
  * @returns {boolean}
  */
-export function verify_age_range_components(commitment, proof, public_inputs, min_age, max_age, context) {
+export function verify_ge_components_with_entropy(commitment, proof, public_inputs, min, context, entropy) {
     const ptr0 = passArray8ToWasm0(commitment, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArray8ToWasm0(proof, wasm.__wbindgen_malloc);
@@ -324,7 +288,9 @@ export function verify_age_range_components(commitment, proof, public_inputs, mi
     const len2 = WASM_VECTOR_LEN;
     const ptr3 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len3 = WASM_VECTOR_LEN;
-    const ret = wasm.verify_age_range_components(ptr0, len0, ptr1, len1, ptr2, len2, min_age, max_age, ptr3, len3);
+    const ptr4 = passArray8ToWasm0(entropy, wasm.__wbindgen_malloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ret = wasm.verify_ge_components_with_entropy(ptr0, len0, ptr1, len1, ptr2, len2, min, ptr3, len3, ptr4, len4);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -332,33 +298,15 @@ export function verify_age_range_components(commitment, proof, public_inputs, mi
 }
 
 /**
- * Verify a proof bundle
- * @param {ProofBundle} bundle
- * @param {bigint} min
- * @param {string} context
- * @returns {boolean}
- */
-export function verify_ge(bundle, min, context) {
-    _assertClass(bundle, ProofBundle);
-    const ptr0 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.verify_ge(bundle.__wbg_ptr, min, ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] !== 0;
-}
-
-/**
- * Verify a zero-knowledge proof that the committed value >= min
  * @param {Uint8Array} commitment
  * @param {Uint8Array} proof
  * @param {Uint8Array} public_inputs
- * @param {bigint} min
+ * @param {bigint} max
  * @param {string} context
+ * @param {Uint8Array} entropy
  * @returns {boolean}
  */
-export function verify_ge_components(commitment, proof, public_inputs, min, context) {
+export function verify_le_components_with_entropy(commitment, proof, public_inputs, max, context, entropy) {
     const ptr0 = passArray8ToWasm0(commitment, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArray8ToWasm0(proof, wasm.__wbindgen_malloc);
@@ -367,91 +315,9 @@ export function verify_ge_components(commitment, proof, public_inputs, min, cont
     const len2 = WASM_VECTOR_LEN;
     const ptr3 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len3 = WASM_VECTOR_LEN;
-    const ret = wasm.verify_ge_components(ptr0, len0, ptr1, len1, ptr2, len2, min, ptr3, len3);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] !== 0;
-}
-
-/**
- * @param {Uint8Array} commitment
- * @param {Uint8Array} proof
- * @param {Uint8Array} public_inputs
- * @param {string} value
- * @param {string} list
- * @param {string} context
- * @returns {boolean}
- */
-export function verify_membership_components(commitment, proof, public_inputs, value, list, context) {
-    const ptr0 = passArray8ToWasm0(commitment, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(proof, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(public_inputs, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len3 = WASM_VECTOR_LEN;
-    const ptr4 = passStringToWasm0(list, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr4 = passArray8ToWasm0(entropy, wasm.__wbindgen_malloc);
     const len4 = WASM_VECTOR_LEN;
-    const ptr5 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len5 = WASM_VECTOR_LEN;
-    const ret = wasm.verify_membership_components(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] !== 0;
-}
-
-/**
- * @param {Uint8Array} commitment
- * @param {Uint8Array} proof
- * @param {Uint8Array} public_inputs
- * @param {string} expected_value
- * @param {string} context
- * @returns {boolean}
- */
-export function verify_string_equality_components(commitment, proof, public_inputs, expected_value, context) {
-    const ptr0 = passArray8ToWasm0(commitment, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(proof, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(public_inputs, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passStringToWasm0(expected_value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len3 = WASM_VECTOR_LEN;
-    const ptr4 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len4 = WASM_VECTOR_LEN;
-    const ret = wasm.verify_string_equality_components(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] !== 0;
-}
-
-/**
- * @param {Uint8Array} commitment
- * @param {Uint8Array} proof
- * @param {Uint8Array} public_inputs
- * @param {string} full_string
- * @param {string} prefix
- * @param {string} context
- * @returns {boolean}
- */
-export function verify_string_prefix_components(commitment, proof, public_inputs, full_string, prefix, context) {
-    const ptr0 = passArray8ToWasm0(commitment, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(proof, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(public_inputs, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passStringToWasm0(full_string, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len3 = WASM_VECTOR_LEN;
-    const ptr4 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len4 = WASM_VECTOR_LEN;
-    const ptr5 = passStringToWasm0(context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len5 = WASM_VECTOR_LEN;
-    const ret = wasm.verify_string_prefix_components(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5);
+    const ret = wasm.verify_le_components_with_entropy(ptr0, len0, ptr1, len1, ptr2, len2, max, ptr3, len3, ptr4, len4);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -496,28 +362,6 @@ function __wbg_get_imports() {
     imports.wbg.__wbg___wbindgen_throw_dd24417ed36fc46e = function(arg0, arg1) {
         throw new Error(getStringFromWasm0(arg0, arg1));
     };
-    imports.wbg.__wbg_error_7534b8e9a36f1ab4 = function(arg0, arg1) {
-        let deferred0_0;
-        let deferred0_1;
-        try {
-            deferred0_0 = arg0;
-            deferred0_1 = arg1;
-            console.error(getStringFromWasm0(arg0, arg1));
-        } finally {
-            wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
-        }
-    };
-    imports.wbg.__wbg_new_8a6f238a6ece86ea = function() {
-        const ret = new Error();
-        return ret;
-    };
-    imports.wbg.__wbg_stack_0ed75d68575b0f3c = function(arg0, arg1) {
-        const ret = arg1.stack;
-        const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
-        getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
-    };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
         // Cast intrinsic for `Ref(String) -> Externref`.
         const ret = getStringFromWasm0(arg0, arg1);
@@ -539,7 +383,6 @@ function __wbg_get_imports() {
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     __wbg_init.__wbindgen_wasm_module = module;
-    cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 

@@ -1,15 +1,15 @@
 {
   "name": "shielded-age-zk",
-  "description": "Zero-knowledge age proof WASM module",
+  "type": "module",
+  "description": "Zero-knowledge bound proofs for Shielded ID",
   "version": "1.5.0",
   "license": "Apache-2.0",
-  "type": "module",
   "files": [
     "shielded_age_zk_bg.wasm",
     "shielded_age_zk.js",
     "shielded_age_zk.d.ts"
   ],
-  "module": "shielded_age_zk.js",
+  "main": "shielded_age_zk.js",
   "types": "shielded_age_zk.d.ts",
   "sideEffects": [
     "./snippets/*"

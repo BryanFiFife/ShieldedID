@@ -1,4 +1,1 @@
-# NOTE: unlike the default wasm-pack template, the compiled glue/wasm files in
-# this directory ARE committed on purpose, so JS consumers of
-# @shielded-id/age-zk resolve its entry point without needing a Rust
-# toolchain. Rebuild with `pnpm --filter @shielded-id/age-zk build`.
+*

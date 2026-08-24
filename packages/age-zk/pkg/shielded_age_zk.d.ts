@@ -10,91 +10,58 @@ export class ProofBundle {
   readonly proof: Uint8Array;
 }
 
-/**
- * Initialize WASM panic handling
- */
-export function main(): void;
+export function base64url_decode(value: string): Uint8Array;
+
+export function base64url_encode(bytes: Uint8Array): string;
 
 /**
- * Prove age is within range: min_age <= age <= max_age
+ * Commit to a numeric value using a caller-supplied 32-byte blinding secret.
+ * The blinding secret must be generated with a CSPRNG and kept private.
  */
-export function prove_age_range(age: bigint, min_age: bigint, max_age: bigint, context: string): ProofBundle;
+export function commit_value(value: bigint, blinding: Uint8Array): Uint8Array;
 
 /**
- * Prove birth year >= min_year
+ * Prove that the source commitment opens to a value >= min.
+ * The Bulletproof covers delta = value - min. The range-proof commitment is
+ * algebraically tied to the source commitment, preventing substitution of an
+ * unrelated in-range witness. Raw values never enter public inputs.
  */
-export function prove_birth_year(birth_year: bigint, min_year: bigint, context: string): ProofBundle;
+export function prove_ge_bound(value: bigint, min: bigint, context: string, blinding: Uint8Array, entropy: Uint8Array): ProofBundle;
 
 /**
- * Generate a zero-knowledge range proof that value >= min using Bulletproofs
+ * Prove that the source commitment opens to a value <= max.
+ * The proof covers delta = max - value with the negated source blinding, so
+ * the verifier can enforce C_delta == max*B - C_source.
  */
-export function prove_ge(value: bigint, min: bigint, context: string): ProofBundle;
+export function prove_le_bound(value: bigint, max: bigint, context: string, blinding: Uint8Array, entropy: Uint8Array): ProofBundle;
 
-/**
- * Prove membership in list (EU resident, endorsed, etc)
- */
-export function prove_membership_in_list(value: string, list: string, context: string): ProofBundle;
+export function source_commitment_from_public_inputs(public_inputs: Uint8Array): Uint8Array;
 
-/**
- * Prove NOT membership in list (no restrictions, etc)
- */
-export function prove_not_in_list(value: string, forbidden_list: string, context: string): ProofBundle;
+export function verify_ge_components_with_entropy(commitment: Uint8Array, proof: Uint8Array, public_inputs: Uint8Array, min: bigint, context: string, entropy: Uint8Array): boolean;
 
-/**
- * Prove string equality (country, state, doc_type, etc)
- */
-export function prove_string_equality(value: string, expected: string, context: string): ProofBundle;
-
-/**
- * Prove string prefix match (postal code prefix, region, etc)
- */
-export function prove_string_prefix(full_string: string, prefix: string, context: string): ProofBundle;
-
-export function verify_age_range_components(commitment: Uint8Array, proof: Uint8Array, public_inputs: Uint8Array, min_age: bigint, max_age: bigint, context: string): boolean;
-
-/**
- * Verify a proof bundle 
- */
-export function verify_ge(bundle: ProofBundle, min: bigint, context: string): boolean;
-
-/**
- * Verify a zero-knowledge proof that the committed value >= min
- */
-export function verify_ge_components(commitment: Uint8Array, proof: Uint8Array, public_inputs: Uint8Array, min: bigint, context: string): boolean;
-
-export function verify_membership_components(commitment: Uint8Array, proof: Uint8Array, public_inputs: Uint8Array, value: string, list: string, context: string): boolean;
-
-export function verify_string_equality_components(commitment: Uint8Array, proof: Uint8Array, public_inputs: Uint8Array, expected_value: string, context: string): boolean;
-
-export function verify_string_prefix_components(commitment: Uint8Array, proof: Uint8Array, public_inputs: Uint8Array, full_string: string, prefix: string, context: string): boolean;
+export function verify_le_components_with_entropy(commitment: Uint8Array, proof: Uint8Array, public_inputs: Uint8Array, max: bigint, context: string, entropy: Uint8Array): boolean;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
   readonly __wbg_proofbundle_free: (a: number, b: number) => void;
-  readonly main: () => void;
+  readonly base64url_decode: (a: number, b: number) => [number, number, number, number];
+  readonly base64url_encode: (a: number, b: number) => [number, number];
+  readonly commit_value: (a: bigint, b: number, c: number) => [number, number, number, number];
   readonly proofbundle_commitment: (a: number) => [number, number];
   readonly proofbundle_proof: (a: number) => [number, number];
   readonly proofbundle_public_inputs: (a: number) => [number, number];
-  readonly prove_age_range: (a: bigint, b: bigint, c: bigint, d: number, e: number) => [number, number, number];
-  readonly prove_birth_year: (a: bigint, b: bigint, c: number, d: number) => [number, number, number];
-  readonly prove_ge: (a: bigint, b: bigint, c: number, d: number) => [number, number, number];
-  readonly prove_membership_in_list: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-  readonly prove_not_in_list: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-  readonly prove_string_equality: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-  readonly prove_string_prefix: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-  readonly verify_age_range_components: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: bigint, i: number, j: number) => [number, number, number];
-  readonly verify_ge: (a: number, b: bigint, c: number, d: number) => [number, number, number];
-  readonly verify_ge_components: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: number) => [number, number, number];
-  readonly verify_membership_components: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number];
-  readonly verify_string_equality_components: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number];
-  readonly verify_string_prefix_components: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number];
-  readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-  readonly __wbindgen_malloc: (a: number, b: number) => number;
-  readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+  readonly prove_ge_bound: (a: bigint, b: bigint, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+  readonly prove_le_bound: (a: bigint, b: bigint, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+  readonly source_commitment_from_public_inputs: (a: number, b: number) => [number, number, number, number];
+  readonly verify_ge_components_with_entropy: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: number, j: number, k: number) => [number, number, number];
+  readonly verify_le_components_with_entropy: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: number, j: number, k: number) => [number, number, number];
   readonly __wbindgen_externrefs: WebAssembly.Table;
+  readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __externref_table_dealloc: (a: number) => void;
+  readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+  readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_start: () => void;
 }
 
