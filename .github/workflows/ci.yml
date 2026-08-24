@@ -104,6 +104,42 @@ jobs:
           done
           exit $bail
 
+  dependency-audit:
+    name: Dependency advisory audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install JavaScript dependencies reproducibly
+        run: pnpm install --frozen-lockfile
+
+      - name: Fail on high or critical JavaScript advisories
+        run: pnpm audit --audit-level=high
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install RustSec cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Rust lockfiles against RustSec
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in packages/age-zk apps/zk-agent; do
+            if [ ! -f "$dir/Cargo.lock" ]; then
+              echo "::error::$dir/Cargo.lock is missing; reproducible Rust dependency audit cannot run"
+              exit 1
+            fi
+            echo "Auditing $dir/Cargo.lock"
+            (cd "$dir" && cargo audit)
+          done
+
   test-linux:
     name: Unit, build and real E2E tests (Linux)
     runs-on: ubuntu-latest
@@ -179,3 +215,16 @@ jobs:
             echo "::error::placeholder or simulated cryptographic coverage detected"
             exit 1
           fi
+
+  release-gate:
+    name: Release gate
+    runs-on: ubuntu-latest
+    needs:
+      - build-wasm
+      - dependency-audit
+      - test-linux
+      - test-windows
+      - truth-gate
+    steps:
+      - name: Confirm all required release jobs succeeded
+        run: echo "All required ShieldedID release gates passed for $GITHUB_SHA"
