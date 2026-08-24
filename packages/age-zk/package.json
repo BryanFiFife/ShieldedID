@@ -1,21 +1,20 @@
 {
   "name": "@shielded-id/age-zk",
   "version": "1.5.0",
-  "description": "Zero-knowledge age proof WASM module",
+  "description": "Privacy-preserving numeric bound proofs using Bulletproofs/Ristretto255",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./pkg/shielded_age_zk.js",
-  "types": "./pkg/shielded_age_zk.d.ts",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
     ".": {
-      "import": "./pkg/shielded_age_zk.js",
-      "require": "./pkg/shielded_age_zk.js",
-      "types": "./pkg/shielded_age_zk.d.ts"
+      "import": "./index.js",
+      "types": "./index.d.ts"
     }
   },
   "scripts": {
     "build": "wasm-pack build --target web --out-dir pkg",
-    "build:node": "wasm-pack build --target nodejs --out-dir pkg",
+    "build:node": "wasm-pack build --target nodejs --out-dir pkg-node",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -27,6 +26,8 @@
     "@types/node": "^20.11.30"
   },
   "files": [
+    "index.js",
+    "index.d.ts",
     "pkg/"
   ]
 }
