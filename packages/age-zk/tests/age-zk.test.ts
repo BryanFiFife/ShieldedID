@@ -1,45 +1,84 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import {
+  create_numeric_commitment,
+  prove_ge_attested,
+  prove_le_attested,
+  source_commitment_from_public_inputs,
+  verify_ge_components,
+  verify_le_components
+} from "../index.js";
 
-// Test vectors for ZK age proof (deterministic for reproducibility)
-const TEST_VECTORS = {
-  validAge25: {
-    age: 25,
-    nonce: "test-nonce-123",
-    expiry: "2026-12-31T23:59:59Z",
-    expectedCommitment: "base64-commitment-here",
-    expectedProof: "base64-proof-here",
-    expectedPublicInputs: "base64-public-inputs-here"
-  },
-  invalidAgeUnder18: {
-    age: 16,
-    shouldFail: true
-  }
-};
+const context = "https://verifier.example|nonce-123|2026-12-31T23:59:59Z";
 
-describe("Age ZK Proof", () => {
-  it("should generate valid ZK proof for age >= 18", async () => {
-    // This test would load the WASM module and verify proof generation
-    // For now, it's a placeholder test
-    expect(true).toBe(true); // Placeholder
+function copy(bytes: Uint8Array) {
+  return Uint8Array.from(bytes);
+}
+
+describe("real Bulletproof bound proofs", () => {
+  it("proves >= without serializing the witness", async () => {
+    const source = await create_numeric_commitment(25);
+    const bundle = await prove_ge_attested(25, 18, context, source.blinding);
+
+    const publicText = new TextDecoder().decode(bundle.public_inputs);
+    expect(publicText).not.toContain("|25|");
+    expect(await verify_ge_components(bundle.commitment, bundle.proof, bundle.public_inputs, 18, context)).toBe(true);
+
+    const extracted = await source_commitment_from_public_inputs(bundle.public_inputs);
+    const expectedSource = await create_numeric_commitment(25, source.blinding);
+    expect(Array.from(extracted)).toEqual(Array.from(Buffer.from(expectedSource.commitment, "base64url")));
   });
 
-  it("should reject ages under 18", async () => {
-    // Test that ages < 18 are rejected
-    expect(true).toBe(true); // Placeholder
+  it("refuses to generate an under-threshold proof", async () => {
+    const source = await create_numeric_commitment(17);
+    await expect(prove_ge_attested(17, 18, context, source.blinding)).rejects.toThrow();
   });
 
-  it("should verify valid ZK proofs", async () => {
-    // Test proof verification with test vectors
-    expect(true).toBe(true); // Placeholder
+  it("rejects bound, context, proof and commitment tampering", async () => {
+    const source = await create_numeric_commitment(25);
+    const bundle = await prove_ge_attested(25, 18, context, source.blinding);
+
+    expect(await verify_ge_components(bundle.commitment, bundle.proof, bundle.public_inputs, 21, context)).toBe(false);
+    expect(await verify_ge_components(bundle.commitment, bundle.proof, bundle.public_inputs, 18, "wrong-context")).toBe(false);
+
+    const tamperedProof = copy(bundle.proof);
+    tamperedProof[0] ^= 0x01;
+    expect(await verify_ge_components(bundle.commitment, tamperedProof, bundle.public_inputs, 18, context)).toBe(false);
+
+    const tamperedCommitment = copy(bundle.commitment);
+    tamperedCommitment[0] ^= 0x01;
+    expect(await verify_ge_components(tamperedCommitment, bundle.proof, bundle.public_inputs, 18, context)).toBe(false);
   });
 
-  it("should reject invalid ZK proofs", async () => {
-    // Test that tampered proofs are rejected
-    expect(true).toBe(true); // Placeholder
+  it("produces unlinkable proof transcripts for the same witness", async () => {
+    const source = await create_numeric_commitment(25);
+    const a = await prove_ge_attested(25, 18, context, source.blinding);
+    const b = await prove_ge_attested(25, 18, context, source.blinding);
+
+    expect(Buffer.from(a.proof).equals(Buffer.from(b.proof))).toBe(false);
+    expect(await verify_ge_components(a.commitment, a.proof, a.public_inputs, 18, context)).toBe(true);
+    expect(await verify_ge_components(b.commitment, b.proof, b.public_inputs, 18, context)).toBe(true);
   });
 
-  it("should bind proof to nonce and expiry", async () => {
-    // Test that proofs are bound to specific nonce/expiry
-    expect(true).toBe(true); // Placeholder
+  it("proves <= for date/cutoff style predicates", async () => {
+    const dobEpochDay = 9_000;
+    const adultCutoffEpochDay = 15_000;
+    const source = await create_numeric_commitment(dobEpochDay);
+    const bundle = await prove_le_attested(dobEpochDay, adultCutoffEpochDay, context, source.blinding);
+
+    expect(await verify_le_components(
+      bundle.commitment,
+      bundle.proof,
+      bundle.public_inputs,
+      adultCutoffEpochDay,
+      context
+    )).toBe(true);
+
+    expect(await verify_le_components(
+      bundle.commitment,
+      bundle.proof,
+      bundle.public_inputs,
+      adultCutoffEpochDay - 7_000,
+      context
+    )).toBe(false);
   });
 });
