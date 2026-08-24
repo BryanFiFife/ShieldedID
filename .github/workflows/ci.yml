@@ -164,7 +164,18 @@ jobs:
       - name: Real issuer-registry-wallet-verifier E2E
         run: pnpm -F shielded-integration-tests test
       - name: Build production workspaces
-        run: pnpm build
+        shell: bash
+        run: |
+          set +e
+          pnpm build > /tmp/shielded-build.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Production build failure (tail)"
+            tail -n 200 /tmp/shielded-build.log
+            echo "::endgroup::"
+            exit "$status"
+          fi
+          tail -n 40 /tmp/shielded-build.log
       - name: Verifier backend boot check
         run: |
           cd apps/verifier-demo
