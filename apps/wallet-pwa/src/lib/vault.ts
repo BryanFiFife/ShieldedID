@@ -32,6 +32,7 @@ export interface VaultPayload {
   /** Issuer-signed private witnesses used for accepted ZK identity predicates. */
   numericWitnesses: Partial<Record<NumericAttributeCode, NumericCredentialWitness>>;
   masterSecret: string;
+  walletId?: string;
   signingKeyEncrypted?: string;
   signingKeyIv?: string;
   webauthnCredentialId?: string;
@@ -138,7 +139,6 @@ export async function decryptVault(
     ciphertext
   );
   const decoded = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<VaultPayload>;
-  // Forward migration: v1.5 vaults had no issuer-bound witness store.
   return { ...decoded, numericWitnesses: decoded.numericWitnesses ?? {} } as VaultPayload;
 }
 
