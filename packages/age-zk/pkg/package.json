@@ -1,5 +1,6 @@
 {
   "name": "shielded-age-zk",
+  "type": "module",
   "description": "Zero-knowledge bound proofs for Shielded ID",
   "version": "1.6.1",
   "license": "Apache-2.0",
@@ -8,10 +9,9 @@
     "shielded_age_zk.js",
     "shielded_age_zk.d.ts"
   ],
-  "module": "shielded_age_zk.js",
+  "main": "shielded_age_zk.js",
   "types": "shielded_age_zk.d.ts",
   "sideEffects": [
     "./snippets/*"
-  ],
-  "type": "module"
+  ]
 }
