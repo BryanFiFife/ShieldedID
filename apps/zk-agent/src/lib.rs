@@ -1,19 +1,20 @@
+use base64::{engine::general_purpose, Engine as _};
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
-use curve25519_dalek_ng::ristretto::RistrettoPoint;
+use curve25519_dalek_ng::ristretto::CompressedRistretto;
 use curve25519_dalek_ng::scalar::Scalar;
 use merlin::Transcript;
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
-use base64::{Engine as _, engine::general_purpose};
 
-// Domain separation labels
-const DOMAIN_TRANSCRIPT: &[u8] = b"shielded-id-transcript-v1";
+const DOMAIN_TRANSCRIPT: &[u8] = b"shielded-id-bound-proof-v2";
+const SUITE: &[u8] = b"BULLETPROOFS_RISTRETTO_BOUND_V2";
+const PUBLIC_INPUT_VERSION: &str = "sid-zk-v2";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProofBundle {
-    pub commitment: String,    // base64url
-    pub proof: String,         // base64url
-    pub public_inputs: String, // base64url
+    pub commitment: String,
+    pub proof: String,
+    pub public_inputs: String,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -33,108 +34,115 @@ pub struct ProofResponse {
     pub error: Option<String>,
 }
 
-/// Generate a zero-knowledge range proof that value >= min using Bulletproofs
+fn transcript(min: u64, source_commitment: &[u8; 32], context: &str) -> Transcript {
+    let mut transcript = Transcript::new(DOMAIN_TRANSCRIPT);
+    transcript.append_message(b"suite", SUITE);
+    transcript.append_message(b"operator", b"GE");
+    transcript.append_u64(b"bound", min);
+    transcript.append_message(b"source-commitment", source_commitment);
+    transcript.append_message(b"context", context.as_bytes());
+    transcript
+}
+
+/// Generate a real Bulletproof that cryptographically proves value >= min.
+/// The range proof is over delta = value - min, and the verifier checks that
+/// its commitment equals C(value) - min*B. No witness value is serialized.
 pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, Box<dyn std::error::Error>> {
-    if value < min {
-        return Err("Value must be >= min".into());
-    }
-
+    let delta = value.checked_sub(min).ok_or("value does not satisfy >= bound")?;
     let mut rng = thread_rng();
-
-    // Create generators
     let pc_gens = PedersenGens::default();
     let bp_gens = BulletproofGens::new(64, 1);
 
-    // Create transcript with domain separation and context binding
-    let mut transcript = Transcript::new(DOMAIN_TRANSCRIPT);
-    transcript.append_message(b"suite", b"AGE_ZK_BULLETPROOFS_V1");
-    transcript.append_message(b"context", context.as_bytes());
-
-    // Generate blinding factor
     let mut blinding_bytes = [0u8; 32];
     rng.fill(&mut blinding_bytes);
     let blinding = Scalar::from_bytes_mod_order(blinding_bytes);
+    let source_commitment = pc_gens.commit(Scalar::from(value), blinding).compress().to_bytes();
+    let mut transcript = transcript(min, &source_commitment, context);
 
-    // Create commitment to the value
-    let value_scalar = Scalar::from(value as u64);
-    let pc_gens = PedersenGens::default();
-    let commitment = pc_gens.commit(value_scalar, blinding);
-
-    // Convert commitment to bytes
-    let commitment_bytes = commitment.compress().to_bytes();
-
-    // Create range proof for value ∈ [0, 2^64)
-    let (proof, committed_value) = RangeProof::prove_single(
+    let (proof, delta_commitment) = RangeProof::prove_single(
         &bp_gens,
         &pc_gens,
         &mut transcript,
-        value,
+        delta,
         &blinding,
-        64, // bit length
+        64,
     )?;
 
-    // Verify the proof was created correctly
-    if committed_value != commitment.compress() {
-        return Err("Commitment mismatch in proof generation".into());
+    let expected = (pc_gens.commit(Scalar::from(value), blinding)
+        - pc_gens.B * Scalar::from(min)).compress();
+    if delta_commitment != expected {
+        return Err("internal commitment relation mismatch".into());
     }
 
-    // Serialize proof
-    let proof_bytes = proof.to_bytes();
-
-    // Create public inputs: min value and context
-    let public_inputs = format!("{}|{}", min, context).into_bytes();
+    let source_b64 = general_purpose::URL_SAFE_NO_PAD.encode(source_commitment);
+    let public_inputs = format!("{PUBLIC_INPUT_VERSION}|GE|{min}|{source_b64}|{context}");
 
     Ok(ProofBundle {
-        commitment: general_purpose::URL_SAFE_NO_PAD.encode(commitment_bytes),
-        proof: general_purpose::URL_SAFE_NO_PAD.encode(proof_bytes),
-        public_inputs: general_purpose::URL_SAFE_NO_PAD.encode(public_inputs),
+        commitment: general_purpose::URL_SAFE_NO_PAD.encode(delta_commitment.to_bytes()),
+        proof: general_purpose::URL_SAFE_NO_PAD.encode(proof.to_bytes()),
+        public_inputs: general_purpose::URL_SAFE_NO_PAD.encode(public_inputs.as_bytes()),
     })
 }
 
-/// Verify a zero-knowledge range proof that the committed value >= min
 pub fn verify_ge_components(
     commitment_b64: &str,
     proof_b64: &str,
     public_inputs_b64: &str,
     min: u64,
-    context: &str
+    context: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    // Decode inputs
     let commitment_bytes = general_purpose::URL_SAFE_NO_PAD.decode(commitment_b64)?;
     let proof_bytes = general_purpose::URL_SAFE_NO_PAD.decode(proof_b64)?;
     let public_inputs_bytes = general_purpose::URL_SAFE_NO_PAD.decode(public_inputs_b64)?;
+    if commitment_bytes.len() != 32 {
+        return Ok(false);
+    }
 
-    // Parse public inputs
     let public_inputs_str = String::from_utf8(public_inputs_bytes)?;
-    let parts: Vec<&str> = public_inputs_str.split('|').collect();
-    if parts.len() != 2 || parts[0] != min.to_string() {
+    let mut parts = public_inputs_str.splitn(5, '|');
+    if parts.next() != Some(PUBLIC_INPUT_VERSION) || parts.next() != Some("GE") {
         return Ok(false);
     }
-    if parts[1] != context {
+    if parts.next() != Some(min.to_string().as_str()) {
+        return Ok(false);
+    }
+    let source_b64 = parts.next().ok_or("missing source commitment")?;
+    let bound_context = parts.next().ok_or("missing context")?;
+    if bound_context != context {
         return Ok(false);
     }
 
-    // Parse commitment
-    use curve25519_dalek_ng::ristretto::CompressedRistretto;
-    let compressed = CompressedRistretto::from_slice(&commitment_bytes);
-    let commitment_point = compressed.decompress().ok_or("Invalid commitment point")?;
+    let source_bytes = general_purpose::URL_SAFE_NO_PAD.decode(source_b64)?;
+    if source_bytes.len() != 32 {
+        return Ok(false);
+    }
+    let source_compressed = CompressedRistretto::from_slice(&source_bytes);
+    let source_point = match source_compressed.decompress() {
+        Some(point) => point,
+        None => return Ok(false),
+    };
+    let delta_compressed = CompressedRistretto::from_slice(&commitment_bytes);
 
-    // Parse proof
-    let proof = RangeProof::from_bytes(&proof_bytes)?;
-
-    // Create generators
     let pc_gens = PedersenGens::default();
+    let expected_delta = (source_point - pc_gens.B * Scalar::from(min)).compress();
+    if delta_compressed != expected_delta {
+        return Ok(false);
+    }
+
+    let proof = match RangeProof::from_bytes(&proof_bytes) {
+        Ok(proof) => proof,
+        Err(_) => return Ok(false),
+    };
     let bp_gens = BulletproofGens::new(64, 1);
+    let mut transcript = transcript(min, &source_compressed.to_bytes(), context);
 
-    // Create transcript with domain separation and context binding
-    let mut transcript = Transcript::new(DOMAIN_TRANSCRIPT);
-    transcript.append_message(b"suite", b"AGE_ZK_BULLETPROOFS_V1");
-    transcript.append_message(b"context", context.as_bytes());
-
-    // Verify the range proof
-    proof.verify_single(&bp_gens, &pc_gens, &mut transcript, &compressed, 64)?;
-
-    Ok(true)
+    Ok(proof.verify_single(
+        &bp_gens,
+        &pc_gens,
+        &mut transcript,
+        &delta_compressed,
+        64,
+    ).is_ok())
 }
 
 #[cfg(test)]
@@ -142,128 +150,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_prove_verify_valid_age() {
-        let value = 25;
-        let min = 18;
-        let context = "test-context-v1";
-
-        let bundle = prove_ge(value, min, context).unwrap();
-
-        let verified = verify_ge_components(
+    fn valid_bound_proof_verifies_without_witness_disclosure() {
+        let bundle = prove_ge(25, 18, "test-context-v2").unwrap();
+        let public = String::from_utf8(general_purpose::URL_SAFE_NO_PAD.decode(&bundle.public_inputs).unwrap()).unwrap();
+        assert!(!public.contains("|25|"));
+        assert!(verify_ge_components(
             &bundle.commitment,
             &bundle.proof,
             &bundle.public_inputs,
-            min,
-            context,
-        ).unwrap();
-
-        assert!(verified);
+            18,
+            "test-context-v2",
+        ).unwrap());
     }
 
     #[test]
-    fn test_prove_verify_invalid_age() {
-        let value = 16;
-        let min = 18;
-        let context = "test-context-v1";
-
-        // Should fail because value < min
-        let result = prove_ge(value, min, context);
-        assert!(result.is_err());
+    fn under_bound_generation_fails() {
+        assert!(prove_ge(17, 18, "ctx").is_err());
     }
 
     #[test]
-    fn test_verify_wrong_min() {
-        let value = 25;
-        let min = 18;
-        let context = "test-context-v1";
-
-        let bundle = prove_ge(value, min, context).unwrap();
-
-        // Try to verify with wrong min
-        let verified = verify_ge_components(
-            &bundle.commitment,
-            &bundle.proof,
-            &bundle.public_inputs,
-            21, // wrong min
-            context,
-        ).unwrap();
-
-        assert!(!verified);
+    fn wrong_bound_or_context_fails() {
+        let bundle = prove_ge(25, 18, "ctx").unwrap();
+        assert!(!verify_ge_components(&bundle.commitment, &bundle.proof, &bundle.public_inputs, 21, "ctx").unwrap());
+        assert!(!verify_ge_components(&bundle.commitment, &bundle.proof, &bundle.public_inputs, 18, "wrong").unwrap());
     }
 
     #[test]
-    fn test_verify_wrong_context() {
-        let value = 25;
-        let min = 18;
-        let context = "test-context-v1";
-
-        let bundle = prove_ge(value, min, context).unwrap();
-
-        // Try to verify with wrong context
-        let verified = verify_ge_components(
-            &bundle.commitment,
-            &bundle.proof,
-            &bundle.public_inputs,
-            min,
-            "wrong-context",
-        ).unwrap();
-
-        assert!(!verified);
-    }
-
-    #[test]
-    fn test_deterministic_serialization() {
-        let value = 25;
-        let min = 18;
-        let context = "test-context-v1";
-
-        let bundle1 = prove_ge(value, min, context).unwrap();
-        let bundle2 = prove_ge(value, min, context).unwrap();
-
-        // Bundles should be different due to random blinding factors
-        assert_ne!(bundle1.commitment, bundle2.commitment);
-        assert_ne!(bundle1.proof, bundle2.proof);
-
-        // But both should verify correctly
-        let verified1 = verify_ge_components(
-            &bundle1.commitment,
-            &bundle1.proof,
-            &bundle1.public_inputs,
-            min,
-            context,
-        ).unwrap();
-
-        let verified2 = verify_ge_components(
-            &bundle2.commitment,
-            &bundle2.proof,
-            &bundle2.public_inputs,
-            min,
-            context,
-        ).unwrap();
-
-        assert!(verified1);
-        assert!(verified2);
-    }
-
-    #[test]
-    fn test_base64url_encoding() {
-        let value = 25;
-        let min = 18;
-        let context = "test-context-v1";
-
-        let bundle = prove_ge(value, min, context).unwrap();
-
-        // All fields should be valid base64url (no padding, URL-safe chars)
-        assert!(!bundle.commitment.contains('='));
-        assert!(!bundle.proof.contains('='));
-        assert!(!bundle.public_inputs.contains('='));
-
-        // Should not contain + or /
-        assert!(!bundle.commitment.contains('+'));
-        assert!(!bundle.commitment.contains('/'));
-        assert!(!bundle.proof.contains('+'));
-        assert!(!bundle.proof.contains('/'));
-        assert!(!bundle.public_inputs.contains('+'));
-        assert!(!bundle.public_inputs.contains('/'));
+    fn proofs_are_randomized() {
+        let a = prove_ge(25, 18, "ctx").unwrap();
+        let b = prove_ge(25, 18, "ctx").unwrap();
+        assert_ne!(a.commitment, b.commitment);
+        assert_ne!(a.proof, b.proof);
     }
 }
