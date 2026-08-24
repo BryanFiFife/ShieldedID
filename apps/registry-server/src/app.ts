@@ -46,7 +46,7 @@ export async function buildApp() {
   app.get("/admin/*", async (_request, reply) => reply.type("text/html").sendFile("admin/index.html"));
 
   await app.register(swagger, {
-    openapi: { info: { title: "Shielded ID Registry", version: "1.6.0" } }
+    openapi: { info: { title: "Shielded ID Registry", version: "1.6.1" } }
   });
   await app.register(swaggerUi, { routePrefix: "/docs" });
 
