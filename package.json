@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "typescript": "^5.4.5",
-    "concurrently": "^8.2.2"
+    "concurrently": "^10.0.5"
   },
   "keywords": [
     "privacy-preserving",
