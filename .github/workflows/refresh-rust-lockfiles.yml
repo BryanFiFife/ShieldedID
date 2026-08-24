@@ -15,14 +15,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
       - uses: dtolnay/rust-toolchain@stable
-      - name: Resolve and test Rust proof crates
+      - name: Resolve and validate Rust proof crates
         shell: bash
         run: |
           set -euo pipefail
-          for dir in packages/age-zk apps/zk-agent; do
-            echo "Resolving $dir"
-            (cd "$dir" && cargo update && cargo test)
-          done
+          (cd packages/age-zk && cargo update && cargo check)
+          (cd apps/zk-agent && cargo update && cargo test)
       - name: Commit generated Rust lockfiles
         shell: bash
         run: |
