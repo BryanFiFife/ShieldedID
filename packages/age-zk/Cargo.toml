@@ -1,8 +1,8 @@
 [package]
 name = "shielded-age-zk"
-version = "1.5.0"
+version = "1.6.0"
 edition = "2021"
-description = "Zero-knowledge age proof WASM module"
+description = "Zero-knowledge bound proofs for Shielded ID"
 license = "Apache-2.0"
 
 [lib]
@@ -10,12 +10,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bulletproofs = "3.0.1"
-# no_cc: pure-Rust fallback so the crate builds for wasm32 without a C-to-Wasm
-# compiler (clang) on the build machine; behaviour is unchanged.
 clear_on_drop = { version = "0.2", features = ["no_cc"] }
 curve25519-dalek-ng = "3.0"
 merlin = "2.0"
 rand = "0.7"
+rand_chacha = "0.2"
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
