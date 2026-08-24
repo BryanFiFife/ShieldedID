@@ -15,6 +15,7 @@ import { registerRevokeRoutes } from "./routes/revoke.js";
 import { registerBackupRoutes } from "./routes/backup.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerIssuerRoutes } from "./routes/issuer.js";
+import { registerIssuerCompatibilityRoutes } from "./routes/issuer-compat.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -54,6 +55,7 @@ export async function buildApp() {
   await registerRevokeRoutes(app);
   await registerBackupRoutes(app);
   await registerIssuerRoutes(app);
+  await registerIssuerCompatibilityRoutes(app);
   await registerAdminRoutes(app);
 
   app.setNotFoundHandler((request, reply) => {
