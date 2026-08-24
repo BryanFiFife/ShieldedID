@@ -99,9 +99,10 @@ describe("Chaos Engineering: Shielded ID Resilience", () => {
         }
       }
 
-      // At least 60% should succeed
+      // At least 60% should succeed. >= (not >): with a random draw the
+      // rate lands exactly on the boundary often enough to flake CI.
       const successRate = requestQueue.successes / requestQueue.count;
-      expect(successRate).toBeGreaterThan(0.6);
+      expect(successRate).toBeGreaterThanOrEqual(0.6);
     });
   });
 
