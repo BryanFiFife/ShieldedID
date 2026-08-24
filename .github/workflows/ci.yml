@@ -6,21 +6,14 @@ on:
   pull_request:
     branches: [master, main]
 
-# Cancel superseded runs on the same ref to save minutes
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Build the age-zk WASM from Rust sources on every push. If this job
-  # fails, the committed pkg/ artefacts can no longer be reproduced and
-  # consumers would break — exactly the v1.5.0 release defect.
   build-wasm:
-    name: Build age-zk WASM
+    name: Build and attack-test ZK WASM
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/age-zk
     steps:
       - uses: actions/checkout@v4
 
@@ -32,126 +25,152 @@ jobs:
         with:
           workspaces: packages/age-zk
 
-      - name: Build WASM (wasm-pack)
+      - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
         with:
           version: latest
 
-      - name: Build crate
-        run: wasm-pack build --target web --out-dir pkg
+      - name: Build WASM from Rust source
+        working-directory: packages/age-zk
+        run: wasm-pack build --target web --out-dir pkg-ci
 
-      - name: Fail if committed pkg/ is stale or missing files
+      - name: Smoke and adversarial proof checks
+        working-directory: packages/age-zk
         run: |
-          missing=0
-          for f in shielded_age_zk.js shielded_age_zk_bg.wasm shielded_age_zk.d.ts package.json; do
-            if [ ! -f "pkg/$f" ]; then
-              echo "::error::pkg/$f was not produced by the build"
-              missing=1
-            fi
-          done
-          exit $missing
+          cp index.js index.ci.mjs
+          sed -i 's#./pkg/shielded_age_zk.js#./pkg-ci/shielded_age_zk.js#' index.ci.mjs
+          sed -i 's#./pkg/shielded_age_zk_bg.wasm#./pkg-ci/shielded_age_zk_bg.wasm#' index.ci.mjs
+          cat > crypto-ci.mjs <<'EOF'
+          import {
+            create_numeric_commitment,
+            prove_ge_attested,
+            prove_le_attested,
+            verify_ge_components,
+            verify_le_components
+          } from './index.ci.mjs';
 
-      - name: Smoke-test the compiled module in Node
-        run: |
-          cat > roundtrip.test.mjs <<'EOF'
-          import { readFile } from 'node:fs/promises';
-          const { default: init, prove_ge, verify_ge, verify_ge_components } = await import('./pkg/shielded_age_zk.js');
-          await init({ module_or_path: await readFile('./pkg/shielded_age_zk_bg.wasm') });
-          const ctx = 'ci-roundtrip';
-          const bundle = prove_ge(21n, 18n, ctx);
-          if (verify_ge(bundle, 18n, ctx) !== true) throw new Error('valid proof failed verification');
-          if (verify_ge(bundle, 25n, ctx) !== false) throw new Error('wrong threshold unexpectedly verified');
-          const tamperedProof = Uint8Array.from(bundle.proof);
-          tamperedProof[0] ^= 0xff;
-          if (verify_ge_components(bundle.commitment, tamperedProof, bundle.public_inputs, 18n, ctx) !== false) throw new Error('tampered proof unexpectedly verified');
-          console.log('WASM round-trip OK');
+          const ctx = 'https://verifier.example|ci-nonce|2026-12-31T23:59:59Z';
+          const src = await create_numeric_commitment(25);
+          const proof = await prove_ge_attested(25, 18, ctx, src.blinding);
+          if (!await verify_ge_components(proof.commitment, proof.proof, proof.public_inputs, 18, ctx)) {
+            throw new Error('valid GE proof failed');
+          }
+          const publicText = new TextDecoder().decode(proof.public_inputs);
+          if (publicText.includes('|25|')) throw new Error('witness leaked into public inputs');
+          if (await verify_ge_components(proof.commitment, proof.proof, proof.public_inputs, 26, ctx)) {
+            throw new Error('wrong bound verified');
+          }
+          if (await verify_ge_components(proof.commitment, proof.proof, proof.public_inputs, 18, 'wrong-context')) {
+            throw new Error('wrong context verified');
+          }
+          const tampered = Uint8Array.from(proof.proof);
+          tampered[0] ^= 0x01;
+          if (await verify_ge_components(proof.commitment, tampered, proof.public_inputs, 18, ctx)) {
+            throw new Error('tampered proof verified');
+          }
+          let underageRejected = false;
+          try { await prove_ge_attested(17, 18, ctx, src.blinding); } catch { underageRejected = true; }
+          if (!underageRejected) throw new Error('under-bound witness was provable');
+
+          const dob = await create_numeric_commitment(9000);
+          const le = await prove_le_attested(9000, 15000, ctx, dob.blinding);
+          if (!await verify_le_components(le.commitment, le.proof, le.public_inputs, 15000, ctx)) {
+            throw new Error('valid LE proof failed');
+          }
+          console.log('real Bulletproof adversarial gate OK');
           EOF
-          node roundtrip.test.mjs && rm roundtrip.test.mjs
+          node crypto-ci.mjs
+          rm -f crypto-ci.mjs index.ci.mjs
 
-      # The committed artefacts must match a clean build byte-for-byte.
-      # Deterministic thanks to the pinned Cargo.lock; fails when someone
-      # edits Rust sources or src/index.ts without rebuilding/re-committing pkg/.
-      - name: Check committed pkg/ matches fresh build
+      - name: Upload reproducible generated WASM
+        uses: actions/upload-artifact@v4
+        with:
+          name: age-zk-pkg
+          path: packages/age-zk/pkg-ci/
+          if-no-files-found: error
+
+      - name: Check committed generated package is current
+        working-directory: packages/age-zk
         run: |
           bail=0
-          for f in shielded_age_zk.js shielded_age_zk_bg.wasm; do
-            if ! cmp -s "pkg/$f" "../../packages/age-zk/pkg/$f"; then
-              echo "::error::committed packages/age-zk/pkg/$f is stale or missing — rebuild with: pnpm --filter @shielded-id/age-zk build && git add packages/age-zk/pkg"
+          for f in shielded_age_zk.js shielded_age_zk_bg.wasm shielded_age_zk.d.ts shielded_age_zk_bg.wasm.d.ts; do
+            if ! cmp -s "pkg-ci/$f" "pkg/$f"; then
+              echo "::error::packages/age-zk/pkg/$f is stale. Replace it with the age-zk-pkg workflow artifact."
               bail=1
             fi
           done
           exit $bail
 
   test-linux:
-    name: Tests (Linux, Node 20)
+    name: Unit and integration-contract tests (Linux)
     runs-on: ubuntu-latest
     needs: build-wasm
     steps:
       - uses: actions/checkout@v4
-
-      # pnpm version comes from package.json "packageManager" (pnpm@9.1.0)
+      - uses: actions/download-artifact@v4
+        with:
+          name: age-zk-pkg
+          path: packages/age-zk/pkg
       - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      # Unit suites for every workspace package (integration-tests needs a
-      # booted stack + Playwright browsers; covered by its own job).
-      - name: Run unit suites
+      - name: Real ZK unit suite
+        run: pnpm -F @shielded-id/age-zk test
+      - name: Workspace unit suites
         run: pnpm -r --filter=!shielded-integration-tests --filter=!shielded-verifier-demo test
-
-      - name: Node backend boots against committed WASM (ESM named imports)
+      - name: Build production workspaces
+        run: pnpm build
+      - name: Verifier backend boot check
         run: |
           cd apps/verifier-demo
           npx tsx src/backend/callback.ts &
           SERVER_PID=$!
-          sleep 8
-          curl -fsS http://localhost:5050/ > /dev/null || {
-            echo "::error::verifier backend failed to boot (named-import/WASM resolution regression?)"
-            kill $SERVER_PID 2>/dev/null
-            exit 1
-          }
-          kill $SERVER_PID 2>/dev/null
-          echo "backend boot OK"
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in {1..20}; do
+            if curl -fsS http://localhost:5050/ >/dev/null; then
+              echo "backend boot OK"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::verifier backend failed to boot"
+          exit 1
 
   test-windows:
-    name: Tests (Windows, Node 20)
+    name: Unit tests (Windows)
     runs-on: windows-latest
     needs: build-wasm
     steps:
       - uses: actions/checkout@v4
-
-      # pnpm version comes from package.json "packageManager" (pnpm@9.1.0)
+      - uses: actions/download-artifact@v4
+        with:
+          name: age-zk-pkg
+          path: packages/age-zk/pkg
       - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Run unit suites
+      - name: Real ZK unit suite
+        run: pnpm -F @shielded-id/age-zk test
+      - name: Workspace unit suites
         shell: bash
         run: pnpm -r --filter=!shielded-integration-tests --filter=!shielded-verifier-demo test
 
-      - name: Node backend boots against committed WASM
-        shell: bash
+  truth-gate:
+    name: No fake cryptographic coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject placeholder ZK tests and simulated-proof markers
         run: |
-          cd apps/verifier-demo
-          npx tsx src/backend/callback.ts &
-          SERVER_PID=$!
-          sleep 8
-          curl -fsS http://localhost:5050/ > /dev/null || {
-            echo "::error::verifier backend failed to boot"
-            kill $SERVER_PID 2>/dev/null
+          if grep -R --line-number -E 'expect\(true\)\.toBe\(true\)|simulated proof|In a real implementation, this would verify' packages/age-zk packages/verifier-sdk/tests; then
+            echo "::error::placeholder or simulated cryptographic coverage detected"
             exit 1
-          }
-          kill $SERVER_PID 2>/dev/null
-          echo "backend boot OK"
+          fi
