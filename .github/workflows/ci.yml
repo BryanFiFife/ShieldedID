@@ -14,38 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sync-lockfile:
-    name: One-time lockfile synchronization
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/cryptographic-truth-pass'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - name: Regenerate dependency lock from workspace manifests
-        run: pnpm install --lockfile-only --no-frozen-lockfile
-      - name: Commit lock only when workspace graph changed
-        shell: bash
-        run: |
-          if git diff --quiet -- pnpm-lock.yaml; then
-            echo "lockfile already synchronized"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          git commit -m "chore: synchronize pnpm lockfile for hardened workspace"
-          git push origin "HEAD:${GITHUB_HEAD_REF}"
-          echo "::error::lockfile was synchronized on the source branch; the resulting commit must pass a clean read-only run"
-          exit 1
-
   build-wasm:
     name: Build and attack-test ZK WASM
     runs-on: ubuntu-latest
@@ -130,7 +98,7 @@ jobs:
           bail=0
           for f in shielded_age_zk.js shielded_age_zk_bg.wasm shielded_age_zk.d.ts shielded_age_zk_bg.wasm.d.ts; do
             if ! cmp -s "pkg-ci/$f" "pkg/$f"; then
-              echo "::error::packages/age-zk/pkg/$f is stale. Replace it with the age-zk-pkg workflow artifact."
+              echo "::error::packages/age-zk/pkg/$f is stale. Regenerate it from the verified Rust source before release."
               bail=1
             fi
           done
