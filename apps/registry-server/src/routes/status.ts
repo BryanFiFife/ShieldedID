@@ -6,6 +6,18 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function auditStatus(
+  db: ReturnType<typeof getDb>,
+  eventType: "STATUS_CHECK" | "KEY_STATUS_CHECK",
+  walletId: string,
+  metadata: Record<string, unknown>,
+  timestamp: string
+) {
+  db.prepare(
+    "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
+  ).run(eventType, walletId, JSON.stringify(metadata), timestamp);
+}
+
 export async function registerStatusRoutes(app: FastifyInstance) {
   app.get(
     "/health",
@@ -25,13 +37,11 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         }
       }
     },
-    async (_request, reply) => {
-      reply.send({
-        ok: true,
-        service: "registry-server",
-        timestamp: nowIso()
-      });
-    }
+    async (_request, reply) => reply.send({
+      ok: true,
+      service: "registry-server",
+      timestamp: nowIso()
+    })
   );
 
   app.get(
@@ -43,9 +53,7 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         params: {
           type: "object",
           required: ["walletId"],
-          properties: {
-            walletId: { type: "string" }
-          }
+          properties: { walletId: { type: "string" } }
         },
         response: {
           200: {
@@ -66,10 +74,7 @@ export async function registerStatusRoutes(app: FastifyInstance) {
                     status: { type: "string" },
                     revokedAt: { type: ["string", "null"] },
                     expiresAt: { type: ["string", "null"] },
-                    publicKey: {
-                      type: "object",
-                      additionalProperties: true
-                    }
+                    publicKey: { type: "object", additionalProperties: true }
                   }
                 }
               },
@@ -83,28 +88,26 @@ export async function registerStatusRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { walletId } = request.params as { walletId: string };
       const db = getDb();
-
-      const wallet = db
-        .prepare("SELECT status FROM wallets WHERE wallet_id = ?")
-        .get(walletId) as { status: string } | undefined;
+      const checkedAt = nowIso();
+      const wallet = db.prepare("SELECT status FROM wallets WHERE wallet_id = ?").get(walletId) as { status: string } | undefined;
 
       if (!wallet) {
-        // Compatibility: callers that previously supplied a key id can still
-        // resolve its wallet, but the verifier's normal path always uses walletId.
-        const key = db
-          .prepare(
-            "SELECT wallet_id, revoked_at, key_material, expires_at FROM wallet_keys WHERE key_id = ? LIMIT 1"
-          )
-          .get(walletId) as {
-            wallet_id: string;
-            revoked_at: string | null;
-            key_material: string;
-            expires_at: string;
-          } | undefined;
-        if (!key) {
-          return reply.code(404).send({ ok: false, error: "WALLET_NOT_FOUND" });
-        }
+        const key = db.prepare(
+          "SELECT key_id, wallet_id, revoked_at, key_material, expires_at FROM wallet_keys WHERE key_id = ? LIMIT 1"
+        ).get(walletId) as {
+          key_id: string;
+          wallet_id: string;
+          revoked_at: string | null;
+          key_material: string;
+          expires_at: string;
+        } | undefined;
+        if (!key) return reply.code(404).send({ ok: false, error: "WALLET_NOT_FOUND" });
 
+        try {
+          auditStatus(db, "STATUS_CHECK", key.wallet_id, { compatibility_key_id: key.key_id }, checkedAt);
+        } catch (err) {
+          request.log.error({ err }, "status audit logging failed");
+        }
         reply.header("Cache-Control", "no-store");
         return reply.send({
           walletId: key.wallet_id,
@@ -112,45 +115,34 @@ export async function registerStatusRoutes(app: FastifyInstance) {
           revokedAt: key.revoked_at ?? null,
           expiresAt: key.expires_at,
           keys: [{
-            keyId: walletId,
+            keyId: key.key_id,
             status: key.revoked_at ? "REVOKED" : "ACTIVE",
             revokedAt: key.revoked_at,
             expiresAt: key.expires_at,
             publicKey: JSON.parse(key.key_material)
           }],
-          checkedAt: nowIso()
+          checkedAt
         });
       }
 
-      const keys = db
-        .prepare(
-          "SELECT key_id, revoked_at, key_material, expires_at FROM wallet_keys WHERE wallet_id = ? ORDER BY created_at ASC"
-        )
-        .all(walletId) as Array<{
-          key_id: string;
-          revoked_at: string | null;
-          key_material: string;
-          expires_at: string;
-        }>;
+      const keys = db.prepare(
+        "SELECT key_id, revoked_at, key_material, expires_at FROM wallet_keys WHERE wallet_id = ? ORDER BY created_at ASC"
+      ).all(walletId) as Array<{
+        key_id: string;
+        revoked_at: string | null;
+        key_material: string;
+        expires_at: string;
+      }>;
+      const walletRevocation = db.prepare(
+        "SELECT effective_at FROM revocations WHERE target_type = 'WALLET' AND target_id = ? ORDER BY effective_at DESC LIMIT 1"
+      ).get(walletId) as { effective_at: string } | undefined;
 
-      const walletRevocation = db
-        .prepare(
-          "SELECT effective_at FROM revocations WHERE target_type = 'WALLET' AND target_id = ? ORDER BY effective_at DESC LIMIT 1"
-        )
-        .get(walletId) as { effective_at: string } | undefined;
+      try {
+        auditStatus(db, "STATUS_CHECK", walletId, {}, checkedAt);
+      } catch (err) {
+        request.log.error({ err }, "status audit logging failed");
+      }
 
-      const checkedAt = nowIso();
-      setImmediate(() => {
-        try {
-          db.prepare(
-            "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
-          ).run("STATUS_CHECK", walletId, JSON.stringify({}), checkedAt);
-        } catch (err) {
-          request.log.error({ err }, "status audit logging failed");
-        }
-      });
-
-      // Trust/revocation metadata must not be cached by intermediaries.
       reply.header("Cache-Control", "no-store");
       return reply.send({
         walletId,
@@ -177,9 +169,7 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         params: {
           type: "object",
           required: ["keyId"],
-          properties: {
-            keyId: { type: "string" }
-          }
+          properties: { keyId: { type: "string" } }
         },
         response: {
           200: {
@@ -201,33 +191,23 @@ export async function registerStatusRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { keyId } = request.params as { keyId: string };
       const db = getDb();
-
-      const key = db
-        .prepare(
-          "SELECT key_id, wallet_id, revoked_at, created_at, expires_at FROM wallet_keys WHERE key_id = ? LIMIT 1"
-        )
-        .get(keyId) as {
-          key_id: string;
-          wallet_id: string;
-          revoked_at: string | null;
-          created_at: string;
-          expires_at: string;
-        } | undefined;
-
-      if (!key) {
-        return reply.code(404).send({ ok: false, error: "KEY_NOT_FOUND" });
-      }
+      const key = db.prepare(
+        "SELECT key_id, wallet_id, revoked_at, created_at, expires_at FROM wallet_keys WHERE key_id = ? LIMIT 1"
+      ).get(keyId) as {
+        key_id: string;
+        wallet_id: string;
+        revoked_at: string | null;
+        created_at: string;
+        expires_at: string;
+      } | undefined;
+      if (!key) return reply.code(404).send({ ok: false, error: "KEY_NOT_FOUND" });
 
       const checkedAt = nowIso();
-      setImmediate(() => {
-        try {
-          db.prepare(
-            "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
-          ).run("KEY_STATUS_CHECK", key.wallet_id, JSON.stringify({ key_id: keyId }), checkedAt);
-        } catch (err) {
-          request.log.error({ err }, "key status audit logging failed");
-        }
-      });
+      try {
+        auditStatus(db, "KEY_STATUS_CHECK", key.wallet_id, { key_id: keyId }, checkedAt);
+      } catch (err) {
+        request.log.error({ err }, "key status audit logging failed");
+      }
 
       reply.header("Cache-Control", "no-store");
       return reply.send({
