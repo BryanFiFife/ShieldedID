@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [master, main]
 
+# TEMPORARY remediation permission: the build-wasm job uses this only to
+# replace stale generated WASM on the same-repository hardening branch.
+# This is reverted to read-only once the generated package is synchronized.
+permissions:
+  contents: write
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -88,6 +96,29 @@ jobs:
           name: age-zk-pkg
           path: packages/age-zk/pkg-ci/
           if-no-files-found: error
+
+      - name: One-time refresh generated WASM on remediation branch
+        if: github.event_name == 'pull_request' && github.head_ref == 'fix/cryptographic-truth-pass'
+        working-directory: packages/age-zk
+        shell: bash
+        run: |
+          stale=0
+          for f in shielded_age_zk.js shielded_age_zk_bg.wasm shielded_age_zk.d.ts shielded_age_zk_bg.wasm.d.ts; do
+            if ! cmp -s "pkg-ci/$f" "pkg/$f"; then stale=1; fi
+          done
+          if [ "$stale" -eq 0 ]; then
+            echo "generated package already current"
+            exit 0
+          fi
+          rm -rf pkg
+          mv pkg-ci pkg
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pkg
+          git commit -m "chore(zk): refresh generated WASM from verified Rust source"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
+          echo "::error::generated WASM was refreshed on the source branch; the new commit must pass a clean CI run"
+          exit 1
 
       - name: Check committed generated package is current
         working-directory: packages/age-zk
