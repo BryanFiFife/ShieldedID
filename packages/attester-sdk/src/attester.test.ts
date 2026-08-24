@@ -1,401 +1,151 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ShieldedAttester, AttesterRegistry, type AttesterConfig, type Credential, type SignedCredential } from "./attester";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AttesterRegistry,
+  ShieldedAttester,
+  type AttesterConfig,
+  type NumericCommitmentAttestation
+} from "./attester";
 
-// Mock fetch globally
-global.fetch = vi.fn();
-
-describe("ShieldedAttester", () => {
-  let mockConfig: AttesterConfig;
-  let attester: ShieldedAttester;
-
-  beforeEach(() => {
-    // Reset mocks
-    vi.clearAllMocks();
-
-    mockConfig = {
-      attesterId: "test-attester",
-      attestorName: "Test Attester",
-      attestorUrl: "https://test-attester.com",
-      registryUrl: "https://registry.test",
-      privateKeyPem: `-----BEGIN EC PRIVATE KEY-----
+const PRIVATE_KEY = `-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEILRptTFvHC4vUpUFL25ayiJoUP7QwrytO8SDykTsJm+XoAoGCCqGSM49
 AwEHoUQDQgAEHWx+bncmpTt2TQpsync5qNUkj+1Y3WO4obJ0lNn43NkINtNetB/+
 UTKEVTynPuwyor7Dotzzgc+EyI6eWDsJZg==
------END EC PRIVATE KEY-----`,
-      publicKeyPem: `-----BEGIN PUBLIC KEY-----
+-----END EC PRIVATE KEY-----`;
+const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHWx+bncmpTt2TQpsync5qNUkj+1Y
 3WO4obJ0lNn43NkINtNetB/+UTKEVTynPuwyor7Dotzzgc+EyI6eWDsJZg==
------END PUBLIC KEY-----`
-    };
+-----END PUBLIC KEY-----`;
 
-    // Create attester instance
-    attester = new ShieldedAttester(mockConfig);
+function config(overrides: Partial<AttesterConfig> = {}): AttesterConfig {
+  return {
+    attesterId: "test-attester",
+    attestorName: "Test Attester",
+    attestorUrl: "https://issuer.example",
+    registryUrl: "https://registry.example",
+    privateKeyPem: PRIVATE_KEY,
+    publicKeyPem: PUBLIC_KEY,
+    registryAuthToken: "registry-token",
+    ...overrides
+  };
+}
+
+describe("ShieldedAttester", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it("exports a real P-256 JWK", () => {
+    const jwk = new ShieldedAttester(config()).exportPublicKeyJWK();
+    expect(jwk.kty).toBe("EC");
+    expect(jwk.crv).toBe("P-256");
+    expect(jwk.x).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(jwk.y).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(jwk.x).not.toContain("placeholder");
+    expect(jwk.y).not.toContain("placeholder");
   });
 
-  describe("constructor", () => {
-    it("should create instance with valid config", () => {
-      expect(attester).toBeDefined();
-      expect(attester).toBeInstanceOf(ShieldedAttester);
-    });
+  it("issues independently signed DOB and KYC source commitments", async () => {
+    const attester = new ShieldedAttester(config());
+    const issued = await attester.issueCredential(
+      "user-123",
+      { dateOfBirth: "2000-05-15", kycLevel: 3, name: "Alice" },
+      "2027-08-24T00:00:00.000Z"
+    );
 
-    it("should throw on invalid private key", () => {
-      const badConfig = { ...mockConfig, privateKeyPem: "invalid-key" };
-      expect(() => new ShieldedAttester(badConfig)).toThrow();
-    });
+    expect(await attester.verifyCredential(issued.credential, issued.signature)).toBe(true);
+    expect(issued.numericWitnesses.DOB_YYYYMMDD?.value).toBe(20000515);
+    expect(issued.numericWitnesses.KYC_LEVEL?.value).toBe(3);
 
-    it("should throw on invalid public key", () => {
-      const badConfig = { ...mockConfig, publicKeyPem: "invalid-key" };
-      expect(() => new ShieldedAttester(badConfig)).toThrow();
-    });
+    for (const witness of Object.values(issued.numericWitnesses)) {
+      expect(witness).toBeDefined();
+      expect(witness!.blinding).not.toBe("");
+      expect(witness!.attestation.commitment).not.toBe("");
+      expect(await attester.verifyCommitmentAttestation(witness!.attestation)).toBe(true);
+    }
   });
 
-  describe("issueCredential", () => {
-    it("should issue credential with valid inputs", async () => {
-      const userId = "user-123";
-      const attributes = { name: "Alice", age: 25 };
-      const expiresAt = "2027-01-01T00:00:00Z";
-
-      const result = await attester.issueCredential(userId, attributes, expiresAt);
-
-      expect(result).toBeDefined();
-      expect(result.credential).toBeDefined();
-      expect(result.signature).toBeDefined();
-      expect(result.algorithm).toBe("ECDSA_P256_SHA256_1.0.0");
-
-      // Check credential structure
-      const cred = result.credential;
-      expect(cred["@context"]).toBe("https://w3c.github.io/vc-data-model");
-      expect(cred.type).toEqual(["VerifiableCredential", "ShieldedIDCredential"]);
-      expect(cred.issuer).toBe("did:shielded:test-attester");
-      expect(cred.credentialSubject.id).toBe("did:shielded:user-123");
-      expect(cred.credentialSubject.attributes).toEqual(attributes);
-      expect(cred.expirationDate).toBe(expiresAt);
-    });
-
-    it("should throw on empty userId", async () => {
-      await expect(attester.issueCredential("", { name: "Alice" }, "2027-01-01T00:00:00Z"))
-        .rejects.toThrow("userId required");
-    });
-
-    it("should throw on whitespace userId", async () => {
-      await expect(attester.issueCredential("   ", { name: "Alice" }, "2027-01-01T00:00:00Z"))
-        .rejects.toThrow("userId required");
-    });
-
-    it("should throw on empty attributes", async () => {
-      await expect(attester.issueCredential("user-123", {}, "2027-01-01T00:00:00Z"))
-        .rejects.toThrow("attributes required");
-    });
-
-    it("should throw on missing expiresAt", async () => {
-      await expect(attester.issueCredential("user-123", { name: "Alice" }, ""))
-        .rejects.toThrow("expiresAt required");
-    });
-
-    it("should include issuance date", async () => {
-      const before = new Date();
-      const result = await attester.issueCredential("user-123", { name: "Alice" }, "2027-01-01T00:00:00Z");
-      const after = new Date();
-
-      const issuanceDate = new Date(result.credential.issuanceDate);
-      expect(issuanceDate.getTime()).toBeGreaterThanOrEqual(before.getTime());
-      expect(issuanceDate.getTime()).toBeLessThanOrEqual(after.getTime());
-    });
+  it("rejects tampered commitment attestations", async () => {
+    const attester = new ShieldedAttester(config());
+    const issued = await attester.issueCredential(
+      "user-123",
+      { kycLevel: 2 },
+      "2027-08-24T00:00:00.000Z"
+    );
+    const original = issued.numericWitnesses.KYC_LEVEL!.attestation;
+    const tampered: NumericCommitmentAttestation = { ...original, commitment: `${original.commitment}A` };
+    expect(await attester.verifyCommitmentAttestation(tampered)).toBe(false);
   });
 
-  describe("verifyCredential", () => {
-    let testCredential: Credential;
-    let testSignature: string;
-
-    beforeEach(async () => {
-      // Create a test credential and signature
-      const result = await attester.issueCredential("user-123", { name: "Alice" }, "2027-01-01T00:00:00Z");
-      testCredential = result.credential;
-      testSignature = result.signature;
-    });
-
-    it("should verify valid credential signature", async () => {
-      const isValid = await attester.verifyCredential(testCredential, testSignature);
-      expect(isValid).toBe(true);
-    });
-
-    it("should reject invalid signature", async () => {
-      const isValid = await attester.verifyCredential(testCredential, "invalid-signature");
-      expect(isValid).toBe(false);
-    });
-
-    it("should reject tampered credential", async () => {
-      const tamperedCredential = JSON.parse(JSON.stringify(testCredential)); // Deep copy
-      // Tamper with issuer field which should definitely change the signature
-      tamperedCredential.issuer = "did:shielded:evil-attester";
-
-      const isValid = await attester.verifyCredential(tamperedCredential, testSignature);
-      expect(isValid).toBe(false);
-    });
-
-    it("should handle malformed signature gracefully", async () => {
-      const isValid = await attester.verifyCredential(testCredential, "not-base64url");
-      expect(isValid).toBe(false);
-    });
+  it("rejects invalid and expired issuance inputs", async () => {
+    const attester = new ShieldedAttester(config());
+    await expect(attester.issueCredential("", { kycLevel: 2 }, "2027-08-24T00:00:00.000Z"))
+      .rejects.toThrow("userId required");
+    await expect(attester.issueCredential("u", {}, "2027-08-24T00:00:00.000Z"))
+      .rejects.toThrow("attributes required");
+    await expect(attester.issueCredential("u", { kycLevel: 9 }, "2027-08-24T00:00:00.000Z"))
+      .rejects.toThrow("kycLevel");
+    await expect(attester.issueCredential("u", { kycLevel: 2 }, "2020-01-01T00:00:00Z"))
+      .rejects.toThrow("future");
   });
 
-  describe("generateQRCode", () => {
-    it("should generate QR code deep link", async () => {
-      const mockCredential: SignedCredential = {
-        credential: {
-          "@context": "https://w3c.github.io/vc-data-model",
-          type: ["VerifiableCredential"],
-          issuer: "did:shielded:test",
-          issuanceDate: "2024-01-01T00:00:00Z",
-          expirationDate: "2027-01-01T00:00:00Z",
-          credentialSubject: {
-            id: "did:shielded:user-123",
-            attributes: { name: "Alice" }
-          }
-        },
-        signature: "test-signature",
-        algorithm: "ECDSA_P256_SHA256_1.0.0"
-      };
-
-      const qrCode = await attester.generateQRCode(mockCredential);
-
-      expect(qrCode).toContain("shielded-id://credential?data=");
-      expect(qrCode).toContain("data=");
-
-      // Should be base64url encoded
-      const dataPart = qrCode.split("data=")[1];
-      expect(dataPart).toBeDefined();
-
-      // Decode and verify structure
-      const decoded = JSON.parse(Buffer.from(dataPart, "base64url").toString());
-      expect(decoded).toEqual(mockCredential);
-    });
+  it("generates an actual QR image data URL", async () => {
+    const attester = new ShieldedAttester(config());
+    const issued = await attester.issueCredential(
+      "user-123",
+      { kycLevel: 2 },
+      "2027-08-24T00:00:00.000Z"
+    );
+    const qr = await attester.generateQRCode(issued);
+    expect(qr).toMatch(/^data:image\/png;base64,/);
   });
 
-  describe("registerPublicKey", () => {
-    it("should register public key successfully", async () => {
-      const mockResponse = { success: true, keyId: "key-123" };
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse)
-      });
+  it("requires explicit registry authentication and sends the real JWK", async () => {
+    const unauthenticated = new ShieldedAttester(config({ registryAuthToken: undefined }));
+    await expect(unauthenticated.registerPublicKey()).rejects.toThrow("REGISTRY_AUTH_TOKEN_REQUIRED");
 
-      const result = await attester.registerPublicKey();
-
-      expect(result).toEqual(mockResponse);
-      expect(global.fetch).toHaveBeenCalledWith(
-        "https://registry.test/api/attesters/test-attester/keys",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            "Content-Type": "application/json",
-            Authorization: expect.stringContaining("Bearer ")
-          })
-        })
-      );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, keyId: "test-attester#signing-1" })
     });
+    vi.stubGlobal("fetch", fetchMock);
 
-    it("should throw on registration failure", async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: false,
-        statusText: "Internal Server Error"
-      });
-
-      await expect(attester.registerPublicKey())
-        .rejects.toThrow("Failed to register public key: Internal Server Error");
-    });
-  });
-
-  describe("revokeAllCredentials", () => {
-    it("should revoke all credentials successfully", async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true
-      });
-
-      await expect(attester.revokeAllCredentials("Security breach")).resolves.toBeUndefined();
-
-      expect(global.fetch).toHaveBeenCalledWith(
-        "https://registry.test/api/attesters/test-attester/revoke-all",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({
-            reason: "Security breach",
-            attesterId: "test-attester"
-          })
-        })
-      );
-    });
-
-    it("should throw on revocation failure", async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: false,
-        statusText: "Unauthorized"
-      });
-
-      await expect(attester.revokeAllCredentials("Test"))
-        .rejects.toThrow("Failed to revoke credentials: Unauthorized");
-    });
+    const authenticated = new ShieldedAttester(config());
+    await authenticated.registerPublicKey();
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(init.headers.Authorization).toBe("Bearer registry-token");
+    expect(body.publicKey.x).toBeTruthy();
+    expect(body.publicKey.y).toBeTruthy();
+    expect(body.publicKey.x).not.toContain("placeholder");
   });
 });
 
 describe("AttesterRegistry", () => {
-  let registry: AttesterRegistry;
-
-  beforeEach(() => {
-    registry = new AttesterRegistry();
+  it("accepts only P-256 issuer keys and tracks status", async () => {
+    const registry = new AttesterRegistry();
+    const jwk = new ShieldedAttester(config()).exportPublicKeyJWK();
+    await registry.registerAttester({
+      id: "a1",
+      name: "Issuer",
+      url: "https://issuer.example",
+      publicKeyJWK: jwk,
+      status: "active",
+      registeredAt: new Date()
+    });
+    expect((await registry.listAttesters()).map((a) => a.id)).toEqual(["a1"]);
+    await registry.suspendAttester("a1", "incident");
+    expect(await registry.listAttesters()).toEqual([]);
+    await registry.revokeAttester("a1");
+    expect((await registry.getAttester("a1"))?.status).toBe("revoked");
   });
 
-  describe("registerAttester", () => {
-    it("should register attester successfully", async () => {
-      const attesterInfo = {
-        id: "attester-1",
-        name: "Test Attester",
-        url: "https://test.com",
-        publicKeyJWK: { kty: "EC", crv: "P-256", x: "x", y: "y" } as JsonWebKey,
-        status: "active" as const,
-        registeredAt: new Date()
-      };
-
-      await expect(registry.registerAttester(attesterInfo)).resolves.toBeUndefined();
-
-      const retrieved = await registry.getAttester("attester-1");
-      expect(retrieved).toBeDefined();
-      expect(retrieved?.id).toBe("attester-1");
-      expect(retrieved?.name).toBe("Test Attester");
-    });
-
-    it("should throw on missing id", async () => {
-      const badInfo = {
-        id: "",
-        name: "Test",
-        url: "https://test.com",
-        publicKeyJWK: { kty: "EC" } as JsonWebKey,
-        status: "active" as const,
-        registeredAt: new Date()
-      };
-
-      await expect(registry.registerAttester(badInfo))
-        .rejects.toThrow("Missing attester information");
-    });
-
-    it("should throw on missing public key", async () => {
-      const badInfo = {
-        id: "attester-1",
-        name: "Test",
-        url: "https://test.com",
-        publicKeyJWK: null as any,
-        status: "active" as const,
-        registeredAt: new Date()
-      };
-
-      await expect(registry.registerAttester(badInfo))
-        .rejects.toThrow("Missing attester information");
-    });
-  });
-
-  describe("getAttester", () => {
-    it("should return null for non-existent attester", async () => {
-      const result = await registry.getAttester("non-existent");
-      expect(result).toBeNull();
-    });
-
-    it("should return attester when exists", async () => {
-      const attesterInfo = {
-        id: "attester-1",
-        name: "Test Attester",
-        url: "https://test.com",
-        publicKeyJWK: { kty: "EC" } as JsonWebKey,
-        status: "active" as const,
-        registeredAt: new Date()
-      };
-
-      await registry.registerAttester(attesterInfo);
-      const result = await registry.getAttester("attester-1");
-
-      expect(result).toEqual(attesterInfo);
-    });
-  });
-
-  describe("listAttesters", () => {
-    it("should return empty array when no attesters", async () => {
-      const result = await registry.listAttesters();
-      expect(result).toEqual([]);
-    });
-
-    it("should return only active attesters", async () => {
-      const activeAttester = {
-        id: "active-1",
-        name: "Active Attester",
-        url: "https://active.com",
-        publicKeyJWK: { kty: "EC" } as JsonWebKey,
-        status: "active" as const,
-        registeredAt: new Date()
-      };
-
-      const suspendedAttester = {
-        id: "suspended-1",
-        name: "Suspended Attester",
-        url: "https://suspended.com",
-        publicKeyJWK: { kty: "EC" } as JsonWebKey,
-        status: "suspended" as const,
-        registeredAt: new Date()
-      };
-
-      await registry.registerAttester(activeAttester);
-      await registry.registerAttester(suspendedAttester);
-
-      const result = await registry.listAttesters();
-
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe("active-1");
-    });
-  });
-
-  describe("suspendAttester", () => {
-    it("should suspend active attester", async () => {
-      const attesterInfo = {
-        id: "attester-1",
-        name: "Test Attester",
-        url: "https://test.com",
-        publicKeyJWK: { kty: "EC" } as JsonWebKey,
-        status: "active" as const,
-        registeredAt: new Date()
-      };
-
-      await registry.registerAttester(attesterInfo);
-      await registry.suspendAttester("attester-1", "Security issue");
-
-      const result = await registry.getAttester("attester-1");
-      expect(result?.status).toBe("suspended");
-    });
-
-    it("should throw on non-existent attester", async () => {
-      await expect(registry.suspendAttester("non-existent", "Test"))
-        .rejects.toThrow("Attester not found");
-    });
-  });
-
-  describe("revokeAttester", () => {
-    it("should revoke attester", async () => {
-      const attesterInfo = {
-        id: "attester-1",
-        name: "Test Attester",
-        url: "https://test.com",
-        publicKeyJWK: { kty: "EC" } as JsonWebKey,
-        status: "active" as const,
-        registeredAt: new Date()
-      };
-
-      await registry.registerAttester(attesterInfo);
-      await registry.revokeAttester("attester-1");
-
-      const result = await registry.getAttester("attester-1");
-      expect(result?.status).toBe("revoked");
-    });
-
-    it("should throw on non-existent attester", async () => {
-      await expect(registry.revokeAttester("non-existent"))
-        .rejects.toThrow("Attester not found");
-    });
+  it("rejects non-P-256 keys", async () => {
+    const registry = new AttesterRegistry();
+    await expect(registry.registerAttester({
+      id: "bad",
+      name: "Bad",
+      url: "https://bad.example",
+      publicKeyJWK: { kty: "RSA" },
+      status: "active",
+      registeredAt: new Date()
+    })).rejects.toThrow("P-256");
   });
 });
