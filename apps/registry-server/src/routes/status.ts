@@ -25,7 +25,7 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         }
       }
     },
-    async (request, reply) => {
+    async (_request, reply) => {
       reply.send({
         ok: true,
         service: "registry-server",
@@ -38,7 +38,7 @@ export async function registerStatusRoutes(app: FastifyInstance) {
     "/v1/status/:walletId",
     {
       schema: {
-        description: "Get wallet status and key revocation state",
+        description: "Get wallet status and signing-key state",
         tags: ["status"],
         params: {
           type: "object",
@@ -50,20 +50,26 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         response: {
           200: {
             type: "object",
+            required: ["walletId", "status", "keys", "checkedAt"],
             properties: {
               walletId: { type: "string" },
               status: { type: "string" },
               revokedAt: { type: ["string", "null"] },
+              expiresAt: { type: ["string", "null"] },
               keys: {
                 type: "array",
                 items: {
                   type: "object",
+                  required: ["keyId", "status", "expiresAt", "publicKey"],
                   properties: {
                     keyId: { type: "string" },
                     status: { type: "string" },
                     revokedAt: { type: ["string", "null"] },
-                    // SECURITY FIX #1: Include key expiration in API responses
-                    expiresAt: { type: ["string", "null"] }
+                    expiresAt: { type: ["string", "null"] },
+                    publicKey: {
+                      type: "object",
+                      additionalProperties: true
+                    }
                   }
                 }
               },
@@ -83,35 +89,49 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         .get(walletId) as { status: string } | undefined;
 
       if (!wallet) {
+        // Compatibility: callers that previously supplied a key id can still
+        // resolve its wallet, but the verifier's normal path always uses walletId.
         const key = db
           .prepare(
-            // SECURITY FIX #5B: Read stored expires_at instead of calculating
-            "SELECT wallet_id, revoked_at, created_at, expires_at FROM wallet_keys WHERE key_id = ? LIMIT 1"
+            "SELECT wallet_id, revoked_at, key_material, expires_at FROM wallet_keys WHERE key_id = ? LIMIT 1"
           )
-          .get(walletId) as { wallet_id: string; revoked_at: string | null; created_at: string; expires_at: string } | undefined;
+          .get(walletId) as {
+            wallet_id: string;
+            revoked_at: string | null;
+            key_material: string;
+            expires_at: string;
+          } | undefined;
         if (!key) {
-          throw new Error("WALLET_NOT_FOUND");
+          return reply.code(404).send({ ok: false, error: "WALLET_NOT_FOUND" });
         }
-        
-        // SECURITY FIX #5B: Use stored expires_at instead of calculating
-        reply.header("Cache-Control", "public, max-age=300");
-        reply.send({
+
+        reply.header("Cache-Control", "no-store");
+        return reply.send({
           walletId: key.wallet_id,
           status: key.revoked_at ? "REVOKED" : "ACTIVE",
           revokedAt: key.revoked_at ?? null,
-          expiresAt: key.expires_at, // Use stored value
-          keys: [],
+          expiresAt: key.expires_at,
+          keys: [{
+            keyId: walletId,
+            status: key.revoked_at ? "REVOKED" : "ACTIVE",
+            revokedAt: key.revoked_at,
+            expiresAt: key.expires_at,
+            publicKey: JSON.parse(key.key_material)
+          }],
           checkedAt: nowIso()
         });
-        return;
       }
 
       const keys = db
         .prepare(
-          // SECURITY FIX #5B: Read stored expires_at instead of calculating
-          "SELECT key_id, revoked_at, key_material, created_at, expires_at FROM wallet_keys WHERE wallet_id = ? ORDER BY created_at ASC"
+          "SELECT key_id, revoked_at, key_material, expires_at FROM wallet_keys WHERE wallet_id = ? ORDER BY created_at ASC"
         )
-        .all(walletId) as Array<{ key_id: string; revoked_at: string | null; key_material: string; created_at: string; expires_at: string }>;
+        .all(walletId) as Array<{
+          key_id: string;
+          revoked_at: string | null;
+          key_material: string;
+          expires_at: string;
+        }>;
 
       const walletRevocation = db
         .prepare(
@@ -120,39 +140,34 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         .get(walletId) as { effective_at: string } | undefined;
 
       const checkedAt = nowIso();
-      // SECURITY FIX #4C: Async audit logging (non-blocking)
       setImmediate(() => {
         try {
           db.prepare(
             "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
           ).run("STATUS_CHECK", walletId, JSON.stringify({}), checkedAt);
         } catch (err) {
-          console.error("Audit logging failed:", err);
+          request.log.error({ err }, "status audit logging failed");
         }
       });
 
-      reply.header("Cache-Control", "public, max-age=300");
-
-      // SECURITY FIX #5B: Use stored expires_at instead of calculating at runtime
-      reply.send({
+      // Trust/revocation metadata must not be cached by intermediaries.
+      reply.header("Cache-Control", "no-store");
+      return reply.send({
         walletId,
         status: wallet.status,
         revokedAt: walletRevocation?.effective_at ?? null,
-        keys: keys.map((key) => {
-          return {
-            keyId: key.key_id,
-            status: key.revoked_at ? "REVOKED" : "ACTIVE",
-            revokedAt: key.revoked_at,
-            expiresAt: key.expires_at, // Use stored value from database
-            publicKey: JSON.parse(key.key_material)
-          };
-        }),
+        keys: keys.map((key) => ({
+          keyId: key.key_id,
+          status: key.revoked_at ? "REVOKED" : "ACTIVE",
+          revokedAt: key.revoked_at,
+          expiresAt: key.expires_at,
+          publicKey: JSON.parse(key.key_material)
+        })),
         checkedAt
       });
     }
   );
 
-  // SECURITY FIX #2: Create proper key-specific status endpoint
   app.get(
     "/v1/keys/:keyId/status",
     {
@@ -169,6 +184,7 @@ export async function registerStatusRoutes(app: FastifyInstance) {
         response: {
           200: {
             type: "object",
+            required: ["keyId", "walletId", "status", "expiresAt", "createdAt", "checkedAt"],
             properties: {
               keyId: { type: "string" },
               walletId: { type: "string" },
@@ -188,35 +204,37 @@ export async function registerStatusRoutes(app: FastifyInstance) {
 
       const key = db
         .prepare(
-          // SECURITY FIX #5B: Read stored expires_at instead of calculating
           "SELECT key_id, wallet_id, revoked_at, created_at, expires_at FROM wallet_keys WHERE key_id = ? LIMIT 1"
         )
-        .get(keyId) as { key_id: string; wallet_id: string; revoked_at: string | null; created_at: string; expires_at: string } | undefined;
+        .get(keyId) as {
+          key_id: string;
+          wallet_id: string;
+          revoked_at: string | null;
+          created_at: string;
+          expires_at: string;
+        } | undefined;
 
       if (!key) {
-        throw new Error("KEY_NOT_FOUND");
+        return reply.code(404).send({ ok: false, error: "KEY_NOT_FOUND" });
       }
 
-      // SECURITY FIX #5B: Use stored expires_at instead of calculating
       const checkedAt = nowIso();
-      // SECURITY FIX #4C: Async audit logging (non-blocking)
       setImmediate(() => {
         try {
           db.prepare(
             "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
           ).run("KEY_STATUS_CHECK", key.wallet_id, JSON.stringify({ key_id: keyId }), checkedAt);
         } catch (err) {
-          console.error("Audit logging failed:", err);
+          request.log.error({ err }, "key status audit logging failed");
         }
       });
 
-      reply.header("Cache-Control", "public, max-age=300");
-      reply.send({
+      reply.header("Cache-Control", "no-store");
+      return reply.send({
         keyId: key.key_id,
         walletId: key.wallet_id,
         status: key.revoked_at ? "REVOKED" : "ACTIVE",
         revokedAt: key.revoked_at ?? null,
-        // SECURITY FIX #5B: Use stored expires_at value
         expiresAt: key.expires_at,
         createdAt: key.created_at,
         checkedAt
