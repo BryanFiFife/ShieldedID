@@ -1,264 +1,135 @@
-# Shielded ID - Zero-Knowledge Identity Verification
+# Shielded ID
 
-**v1.5.0** | **Production-Ready** | **100% ISO 27001** | **365+ Tests** | **91% Coverage**
+Shielded ID is a minimal-disclosure identity verification implementation built around issuer-attested Pedersen commitments, Bulletproofs over Ristretto255, signed wallet responses, and registry-backed key status.
 
-Privacy-preserving age & KYC verification using zero-knowledge proofs. No PII stored. Minimal disclosure. Enterprise-grade cryptography.
+The hardened v1.6 protocol surface supports three production claim types:
 
-**Keywords**: Zero-knowledge proofs • Age verification • KYC • Privacy-preserving identity • Bulletproofs • ECDSA • Minimal disclosure • Verifiable credentials • Selective disclosure • Identity verification
+- `AGE_OVER`: proves an issuer-attested date of birth satisfies an age threshold without sending the date of birth.
+- `KYC_LEVEL`: proves an issuer-attested numeric assurance level meets a requested minimum without sending the level.
+- `CONTINUITY`: returns a verifier-specific pairwise subject identifier under the signed wallet response.
 
----
+Other predicate families that appeared in earlier prototypes are intentionally **not** advertised as implemented. Unsupported predicates fail closed.
 
-## What is Shielded ID?
+## Security model
 
-**Minimal-disclosure identity verification** using Bulletproofs zero-knowledge proofs. Users prove eligibility (age ≥ 18, KYC verified, etc.) **without revealing raw PII**. Pairwise subject IDs prevent cross-site correlation. Cryptography runs natively in WASM; verified end-to-end by SDK.
+A successful age/KYC verification requires all of the following:
 
-**Use Cases**: Age-gated services • Financial KYC • Adult content • Age-restricted products • Privacy-respecting identity verification
+1. an issuer-generated Pedersen commitment and private witness held by the wallet;
+2. an issuer ECDSA P-256 signature over the commitment attestation;
+3. an active matching issuer key in the registry;
+4. a Bulletproof cryptographically bound to the issuer commitment and requested bound;
+5. request binding to verifier origin, nonce and expiry;
+6. a signed wallet response using the exact registered wallet P-256 key;
+7. an active, non-expired matching wallet key in the registry.
 
----
+The verifier fails closed when these checks cannot be completed.
 
-## Core Guarantees
+### Privacy properties
 
-| Guarantee | Implementation |
-|-----------|-----------------|
-| **Minimal Disclosure** | Age/KYC claims booleanized; raw data never leaves wallet |
-| **Pairwise Subjects** | Per-verifier IDs prevent cross-site correlation |
-| **Revocation-Aware** | Verifier checks registry status before acceptance |
-| **Replay Prevention** | Context binding: origin + nonce + expiry |
-| **Zero PII Storage** | Registry holds only public keys & audit logs |
+Raw DOB and KYC witness values do not enter ZK public inputs and are not included in proof claims. The registry stores public keys, status/revocation records and audit metadata, rather than the private credential witnesses used to construct proofs.
 
----
+Pairwise subject IDs reduce direct subject-identifier reuse between verifier origins. They are **not a complete unlinkability guarantee**: an ordinary issuer-signed Pedersen commitment can itself be a stable correlation handle if the same commitment is disclosed to multiple colluding verifiers. Full anonymous-credential unlinkability would require a rerandomizable credential/signature construction and is outside the current protocol.
+
+## Cryptography
+
+- Bulletproofs range proofs over Ristretto255.
+- Pedersen commitments bound algebraically to range-proof commitments.
+- ECDSA P-256/SHA-256 for issuer and wallet signatures.
+- WebCrypto CSPRNG entropy for browser-side proving/verification orchestration.
+- AES-256-GCM for local vault encryption.
+- Argon2id for vault passphrase derivation.
+
+Generated WASM is rebuilt from Rust in CI and compared byte-for-byte against the committed package. A stale generated package blocks CI.
 
 ## Architecture
 
-```
-User Wallet (PWA)
-    ├─ Local key storage (AES-256-GCM)
-    ├─ WASM ZK Agent (Bulletproofs)
-    └─ Proof generation & signing
-
-Registry Server (Non-Custodial)
-    ├─ Wallet/issuer key status
-    ├─ Revocation checks
-    └─ Audit trails
-
-Verifier SDK
-    ├─ Proof validation
-    ├─ Cryptographic verification
-    └─ Context binding checks
-```
-
-**Components**:
-- **Wallet PWA** (`apps/wallet-pwa`): Proof generation, offline-capable, continuous auth
-- **ZK Agent** (`packages/age-zk`): Bulletproofs/Ristretto255, native Rust, WASM export
-- **Registry** (`apps/registry-server`): Key lifecycle, revocation, non-custodial
-- **Verifier SDK** (`packages/verifier-sdk`): Proof validation, timestamp checks, revocation verification
-- **Demo** (`apps/verifier-demo`): Integration example
-
----
-
-## End-to-End Flow
-
-1. **Verifier** creates proof request (nonce, issuedAt, expiresAt, claim policy)
-2. **Wallet** fetches request → calls ZK agent → proves `age >= threshold` with bound context
-3. **Wallet** signs payload → returns claims + zkProof
-4. **Verifier SDK** validates: timestamps, nonce, revocation, signatures, ZK proof
-5. **Result**: `valid` + pairwiseSubjectId (no PII disclosed)
-
----
-
-## Quick Start
-
-```bash
-# Setup
-pnpm install
-cp .env.example .env
-
-# Database
-cd apps/registry-server && npx knex migrate:latest
-
-# Development
-pnpm dev                    # wallet + verifier demo + registry
-
-# Testing
-pnpm test                   # fast path (ZK skipped)
-ZK_E2E=1 pnpm -F verifier-sdk test  # full ZK tests
+```text
+Issuer / Attester SDK
+    ├── validates issuer inputs
+    ├── creates private numeric witnesses
+    ├── creates Pedersen commitments
+    └── signs commitment attestations
+             │
+             ▼
+Wallet PWA ─────── Registry Server ─────── Verifier SDK
+    │                   │                       │
+    │ private witness   │ wallet/issuer keys   │ request policy
+    │ encrypted vault   │ revocation/status    │ signature checks
+    │ Bulletproofs      │ audit metadata       │ Bulletproof checks
+    └───────────────────┴───────────────────────┘
 ```
 
-**Requirements**: Node 20+, pnpm 9.1.0+
+Components:
 
----
+- `packages/age-zk`: Rust/WASM Bulletproof bound-proof implementation.
+- `packages/attester-sdk`: issuer credential/commitment issuance and issuer-key registration.
+- `apps/wallet-pwa`: local encrypted wallet, credential witness storage and proof generation.
+- `apps/registry-server`: wallet/issuer key lifecycle, status and revocation service.
+- `packages/verifier-sdk`: request generation and fail-closed verification.
+- `apps/verifier-demo`: integration example.
 
-## Supported Claim Types
+## End-to-end flow
 
-| Claim | Proof Type | Purpose |
-|-------|-----------|---------|
-| `AGE_OVER` | ZK (Bulletproofs) | Age threshold (≥18, ≥21, etc.) |
-| `KYC_LEVEL` | ZK (Bulletproofs) | KYC assurance level (≥1, ≥2, etc.) |
-| `CONTINUITY` | Signature | Wallet continuity & per-verifier binding |
+1. The issuer creates a signed commitment attestation for DOB and/or KYC level.
+2. The wallet stores the private value/blinding witness locally.
+3. A verifier creates a request containing the verifier origin, fresh nonce, expiry and requested threshold.
+4. The wallet generates an issuer-bound Bulletproof and a verifier-specific continuity identifier.
+5. The wallet signs the complete response using its registered P-256 proof-signing key.
+6. The verifier retrieves the exact wallet key and issuer key from the registry, checks their state, verifies signatures, verifies the commitment attestation and verifies the Bulletproof against the requested context/bound.
+7. Any failed trust, signature, context, expiry, revocation or proof check rejects the response.
 
-**Roadmap**: Equality predicates (country == US), composite claims (age >= 18 AND kyc >= 2), additional circuits
+## Testing and release gate
 
----
+CI is blocking and includes:
 
-## Testing & Validation
+- reproducible Rust → WASM rebuild;
+- adversarial ZK checks for wrong bounds, wrong context, proof tampering and under-threshold witnesses;
+- witness non-disclosure checks;
+- frozen dependency installation;
+- Linux unit tests and production builds;
+- Windows unit tests;
+- a live issuer → registry → wallet → verifier test using real cryptographic operations and live HTTP routes;
+- issuer-key and wallet-key revocation rejection;
+- a truth gate that rejects known placeholder/simulated cryptographic test markers.
 
-| Metric | Value |
-|--------|-------|
-| Tests Passing | 365+ ✅ |
-| Code Coverage | 91.08% (exceeds 90% target) |
-| Verifier SDK | 186 tests, 100% functions |
-| Registry Server | 42 tests |
-| Wallet PWA | 34 tests |
-| Integration E2E | 17 tests, 100% flows |
-
-**ZK Coverage**:
-- ✅ Valid proofs accepted
-- ✅ Tampered proofs rejected
-- ✅ Nonce/context binding verified
-- ✅ Expired context rejected
-
----
-
-## Security & Compliance
-
-**Cryptography**:
-- ✅ Bulletproofs (Ristretto255) - proven, audited
-- ✅ ECDSA P-256 - NIST standard
-- ✅ SHA-256 - FIPS 180-4
-- ✅ AES-256-GCM - military-grade
-- ✅ Bcryptjs - NIST SP 800-63B
-
-**Standards Achieved**:
-- ✅ **ISO 27001:2022** - 100% (114/114 controls)
-- ✅ **OWASP Top 10** - 100% coverage
-- ✅ **GDPR** - 100% compliant
-- ✅ **CCPA** - 100% compliant
-- ✅ **NIST Cybersecurity** - 95% compliant
-
-**Zero Vulnerabilities**: Critical, high, medium, low - all zero
-
-See [SECURITY.md](SECURITY.md) and [COMPLIANCE.md](COMPLIANCE.md) for details.
-
----
-
-## Cost Analysis
-
-| Category | Traditional KYC | Shielded ID | Savings |
-|----------|-----------------|------------|---------|
-| Annual Licensing | $30-50K | $0 (Apache-2.0) | $30-50K |
-| Per-Verification | $0.50-2.00 | $0.001 (infra) | 99.9% |
-| Setup Time | 40-60 hours | 4-8 hours | 85-92% |
-| Ongoing Support | 1-2 wks/mo | 2-4 hrs/qtr | 90-95% |
-| Breach Liability | $M+ risk | Low (no PII) | Risk eliminated |
-| **Year 1 Total** | **$51-115K** | **$5-20K** | **$31-95K** |
-
----
-
-## Zero-Knowledge Implementation
-
-**Maturity**: ZK-2 (native Bulletproofs agent with verifier E2E coverage)
-
-**Architecture**:
-- WASM bindings call native Rust agent
-- No mocks in production verification
-- Browser role: orchestration only
-- Cryptography: native/WASM execution
-- Not browser-resident JS proving (not production-grade)
-
-**Performance**:
-- Verification: <100ms (achieved: 45-67ms)
-- Proof generation: <500ms (achieved: 180-280ms)
-- Registry lookup: <200ms (achieved: 85-140ms)
-
----
-
-## Known Limitations
-
-- **ZK E2E Gated**: `ZK_E2E=1` required for full WASM tests (avoids startup overhead in CI)
-- **Browser Compatibility**: WebCrypto + WASM required; older/locked-down browsers may fail
-- **Registry Deployment**: Stubbed in tests; production requires real registry with HTTPS & revocation data
-- **Proof Types**: Bulletproofs supports range proofs; equality/composite claims on roadmap
-- **DoS Protection**: Depends on infrastructure controls (rate limits, WAF, etc.)
-
----
-
-## Documentation
-
-| Document | Purpose |
-|----------|---------|
-| [SECURITY.md](SECURITY.md) | Security model, threat boundaries, cryptographic details |
-| [COMPLIANCE.md](COMPLIANCE.md) | ISO 27001, OWASP, GDPR, CCPA, standards alignment |
-| [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | Feature development phases, timeline, design decisions |
-| [PROOF_CATALOG.md](PROOF_CATALOG.md) | Proof specifications, predicates, examples |
-| [docs/spec/protocol-rfc.md](docs/spec/protocol-rfc.md) | RFC protocol specification |
-| [docs/spec/oauth2-profile.md](docs/spec/oauth2-profile.md) | OAuth 2.0 integration profile |
-| [CHANGELOG.md](CHANGELOG.md) | Version history, release notes |
-| [audit.md](audit.md) | Audit report, compliance verification |
-
----
-
-## Production Readiness
-
-**Checklist**:
-- ✅ HTTPS mandatory (TLS 1.3+)
-- ✅ Registry revocation checks enabled
-- ✅ Verifier clock synchronized (NTP)
-- ✅ Rate limiting configured
-- ✅ Audit logging enabled
-- ✅ Health checks deployed
-- ✅ Monitoring operational
-- ✅ Backups automated
-
-See [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) for full checklist.
-
----
+A release should not be treated as independently security audited merely because these repository tests pass.
 
 ## Development
 
-**Tech Stack**:
-- Frontend: React 18, Vite, WASM
-- Backend: Node.js 20, Express, PostgreSQL
-- Cryptography: Rust (age-zk), WebCrypto
-- Testing: Vitest, Playwright
-- Tools: pnpm, TypeScript 5.9, ESLint
+Requirements: Node.js 20+, pnpm 9.x, Rust stable with `wasm32-unknown-unknown`, and `wasm-pack` when rebuilding the ZK package.
 
-**Repository Structure**:
-```
-apps/
-  ├─ wallet-pwa/           # Browser wallet
-  ├─ registry-server/      # Key management
-  ├─ verifier-demo/        # Integration example
-  └─ integration-tests/    # E2E tests
-
-packages/
-  ├─ verifier-sdk/         # Core verification logic
-  ├─ attester-sdk/         # Credential issuance
-  └─ age-zk/              # Bulletproofs WASM
-```
-
-**Commands**:
 ```bash
-pnpm build                          # Build all packages
-pnpm lint                           # Check code quality
-pnpm type-check                     # TypeScript validation
-pnpm test                           # Run tests
-ZK_E2E=1 pnpm -F verifier-sdk test # Full ZK tests
+pnpm install --frozen-lockfile
+pnpm -F @shielded-id/age-zk test
+pnpm -r test
+pnpm build
 ```
 
----
+The complete release gate is defined in `.github/workflows/ci.yml`.
+
+## Compliance and certification
+
+Shielded ID contains technical controls that can support a deployment's security/privacy obligations, but the repository is **not itself ISO 27001 certified, GDPR certified, CCPA certified, NIST certified, or guaranteed vulnerability-free**. Regulatory compliance depends on the operator, deployment, lawful basis, policies, contracts, retention, incident handling, hosting and other organisational measures outside this source tree.
+
+See `COMPLIANCE.md` for a control-oriented implementation note rather than a certification claim.
+
+## Deployment notes
+
+- Production registry and verifier endpoints should be served over HTTPS.
+- Protect issuer key-registration/revocation credentials as administrative secrets.
+- Keep system clocks synchronized because proof requests are time bounded.
+- Treat registry availability as part of the verification dependency; trust checks fail closed rather than accepting stale state by default.
+- Maintain backups and monitoring appropriate to the deployment.
+- Perform an independent security review before using the system for high-risk or regulated decisions.
+
+## Known limitations
+
+- Current ZK production predicates are limited to age threshold and KYC-level threshold proofs.
+- `CONTINUITY` is pairwise by verifier origin but does not by itself provide full cryptographic unlinkability.
+- WebAuthn is an authentication mechanism; proof responses use a dedicated registered P-256 signing key rather than treating WebAuthn assertions as generic signatures.
+- Browser environments must provide WebCrypto and WASM support.
+- Legal/regulatory suitability is deployment-specific.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
-
----
-
-## Standards & Certifications
-
-- ✅ [RFC Protocol Spec](docs/spec/protocol-rfc.md)
-- ✅ [OAuth 2.0 Profile](docs/spec/oauth2-profile.md)
-- ✅ [ISO 27001 Mapping](COMPLIANCE.md)
-- ✅ [OWASP Compliance](COMPLIANCE.md)
-- ✅ 100% Production-Ready
-
-**Questions?** See [SECURITY.md](SECURITY.md) for threat model or [COMPLIANCE.md](COMPLIANCE.md) for standards alignment.
+Apache License 2.0. See `LICENSE`.
