@@ -1,6 +1,5 @@
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
-use curve25519_dalek_ng::ristretto::RistrettoPoint;
-use curve25519_dalek_ng::scalar::Scalar;
+use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 use rand::{Rng, thread_rng};
 use serde::{Deserialize, Serialize};
@@ -115,8 +114,11 @@ pub fn verify_ge_components(
     }
 
     // Parse commitment
-    use curve25519_dalek_ng::ristretto::CompressedRistretto;
-    let compressed = CompressedRistretto::from_slice(&commitment_bytes);
+    use curve25519_dalek::ristretto::CompressedRistretto;
+    let compressed = match CompressedRistretto::from_slice(&commitment_bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
 
     // Parse proof
     let proof = RangeProof::from_bytes(&proof_bytes)?;
