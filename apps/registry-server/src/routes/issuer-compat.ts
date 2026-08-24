@@ -11,17 +11,23 @@ function requireToken(request: FastifyRequest) {
   if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error("ISSUER_AUTH_INVALID");
 }
 
+function validateAttesterId(attesterId: string) {
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(attesterId)) throw new Error("INVALID_ATTESTER_ID");
+}
+
 function validP256(jwk: JsonWebKey | undefined) {
-  return jwk?.kty === "EC" && jwk.crv === "P-256" && Boolean(jwk.x) && Boolean(jwk.y);
+  return jwk?.kty === "EC" && jwk.crv === "P-256" &&
+    typeof jwk.x === "string" && jwk.x.length > 20 &&
+    typeof jwk.y === "string" && jwk.y.length > 20;
 }
 
 export async function registerIssuerCompatibilityRoutes(app: FastifyInstance) {
   app.post("/api/attesters/:attesterId/keys", async (request, reply) => {
     requireToken(request);
     const { attesterId } = request.params as { attesterId: string };
-    if (!/^[A-Za-z0-9._:-]{1,160}$/.test(attesterId)) throw new Error("INVALID_ATTESTER_ID");
+    validateAttesterId(attesterId);
     const body = request.body as { keyId?: string; publicKey?: JsonWebKey; algorithm?: string };
-    if (!body.keyId || !validP256(body.publicKey) || body.algorithm !== "ECDSA_P256_SHA256_1.0.0") {
+    if (!body.keyId || body.keyId.length > 256 || !validP256(body.publicKey) || body.algorithm !== "ECDSA_P256_SHA256_1.0.0") {
       throw new Error("INVALID_ISSUER_KEY");
     }
     const issuerDid = `did:shielded:${attesterId}`;
@@ -48,6 +54,7 @@ export async function registerIssuerCompatibilityRoutes(app: FastifyInstance) {
   app.post("/api/attesters/:attesterId/revoke-all", async (request, reply) => {
     requireToken(request);
     const { attesterId } = request.params as { attesterId: string };
+    validateAttesterId(attesterId);
     const { reason } = (request.body ?? {}) as { reason?: string };
     if (!reason?.trim()) throw new Error("REVOCATION_REASON_REQUIRED");
     const issuerDid = `did:shielded:${attesterId}`;
