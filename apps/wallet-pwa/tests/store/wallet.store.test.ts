@@ -28,7 +28,9 @@ vi.mock("../../src/lib/vault-storage", () => ({
 vi.mock("../../src/lib/keys", () => ({
   createSigningKey: vi.fn(),
   createWebAuthnPasskey: vi.fn(),
-  signWithPasskey: vi.fn()
+  signWithPasskey: vi.fn(),
+  decryptSigningKey: vi.fn(),
+  signWithSoftwareKey: vi.fn()
 }));
 
 vi.mock("../../src/lib/pairwise-id", () => ({
@@ -252,14 +254,17 @@ describe("Wallet Store", () => {
 
   describe("enrollWallet", () => {
     it("creates new wallet with profile", async () => {
-      const { createSigningKey, createWebAuthnPasskey, signWithPasskey } = await import("../../src/lib/keys");
+      const { createSigningKey, createWebAuthnPasskey, signWithPasskey, decryptSigningKey, signWithSoftwareKey } = await import("../../src/lib/keys");
       const { deriveMasterSecret } = await import("../../src/lib/pairwise-id");
       const { createAttribute, commitAttribute } = await import("../../src/lib/commitments");
       const { encryptVault } = await import("../../src/lib/vault");
       const { saveVaultEnvelope } = await import("../../src/lib/vault-storage");
 
       // Mock all the dependencies
-      const mockSigningKey = { encryptedPrivateKey: new Uint8Array([1, 2, 3]) };
+      const mockSigningKey = {
+        publicKeyJwk: { kty: "EC", crv: "P-256" },
+        encryptedPrivateKey: new Uint8Array([1, 2, 3])
+      };
       const mockPasskey = {
         credentialId: "test-credential",
         publicKeyJwk: { kty: "EC", crv: "P-256" }
@@ -276,16 +281,18 @@ describe("Wallet Store", () => {
       createSigningKey.mockResolvedValue(mockSigningKey);
       createWebAuthnPasskey.mockResolvedValue(mockPasskey);
       signWithPasskey.mockResolvedValue(new Uint8Array([7, 8, 9]));
+      decryptSigningKey.mockResolvedValue({} as CryptoKey);
+      signWithSoftwareKey.mockResolvedValue(new Uint8Array([10, 11, 12]));
       deriveMasterSecret.mockReturnValue(mockMasterSecret);
       createAttribute.mockReturnValue(mockAttribute);
       commitAttribute.mockResolvedValue(mockCommitment);
       encryptVault.mockResolvedValue({ encrypted: "vault-data" });
       saveVaultEnvelope.mockResolvedValue(undefined);
 
-      // Mock registry registration
+      // Mock registry registration (hardened registry returns walletId + keyId)
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ walletId: "test-wallet-id" })
+        json: () => Promise.resolve({ walletId: "test-wallet-id", keyId: "test-key-id" })
       }));
 
       const { result } = renderHook(() => useWalletStore());
@@ -320,12 +327,15 @@ describe("Wallet Store", () => {
     });
 
     it("creates wallet without profile", async () => {
-      const { createSigningKey, createWebAuthnPasskey, signWithPasskey } = await import("../../src/lib/keys");
+      const { createSigningKey, createWebAuthnPasskey, signWithPasskey, decryptSigningKey, signWithSoftwareKey } = await import("../../src/lib/keys");
       const { deriveMasterSecret } = await import("../../src/lib/pairwise-id");
       const { encryptVault } = await import("../../src/lib/vault");
       const { saveVaultEnvelope } = await import("../../src/lib/vault-storage");
 
-      const mockSigningKey = { encryptedPrivateKey: new Uint8Array([1, 2, 3]) };
+      const mockSigningKey = {
+        publicKeyJwk: { kty: "EC", crv: "P-256" },
+        encryptedPrivateKey: new Uint8Array([1, 2, 3])
+      };
       const mockPasskey = {
         credentialId: "test-credential",
         publicKeyJwk: { kty: "EC", crv: "P-256" }
@@ -335,13 +345,15 @@ describe("Wallet Store", () => {
       createSigningKey.mockResolvedValue(mockSigningKey);
       createWebAuthnPasskey.mockResolvedValue(mockPasskey);
       signWithPasskey.mockResolvedValue(new Uint8Array([7, 8, 9]));
+      decryptSigningKey.mockResolvedValue({} as CryptoKey);
+      signWithSoftwareKey.mockResolvedValue(new Uint8Array([10, 11, 12]));
       deriveMasterSecret.mockReturnValue(mockMasterSecret);
       encryptVault.mockResolvedValue({ encrypted: "vault-data" });
       saveVaultEnvelope.mockResolvedValue(undefined);
 
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ walletId: "test-wallet-id" })
+        json: () => Promise.resolve({ walletId: "test-wallet-id", keyId: "test-key-id" })
       });
 
       const { result } = renderHook(() => useWalletStore());
@@ -354,14 +366,19 @@ describe("Wallet Store", () => {
     });
 
     it("handles registry registration failure", async () => {
-      const { createSigningKey, createWebAuthnPasskey, signWithPasskey } = await import("../../src/lib/keys");
+      const { createSigningKey, createWebAuthnPasskey, signWithPasskey, decryptSigningKey, signWithSoftwareKey } = await import("../../src/lib/keys");
 
-      createSigningKey.mockResolvedValue({ encryptedPrivateKey: new Uint8Array([1, 2, 3]) });
+      createSigningKey.mockResolvedValue({
+        publicKeyJwk: { kty: "EC", crv: "P-256" },
+        encryptedPrivateKey: new Uint8Array([1, 2, 3])
+      });
       createWebAuthnPasskey.mockResolvedValue({
         credentialId: "test-credential",
         publicKeyJwk: { kty: "EC", crv: "P-256" }
       });
       signWithPasskey.mockResolvedValue(new Uint8Array([7, 8, 9]));
+      decryptSigningKey.mockResolvedValue({} as CryptoKey);
+      signWithSoftwareKey.mockResolvedValue(new Uint8Array([10, 11, 12]));
 
       vi.stubGlobal("import.meta.env", { VITE_REGISTRY_URL: "http://localhost:3000" });
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -410,7 +427,8 @@ describe("Wallet Store", () => {
       const mockProof = { type: "test-proof" };
       const mockPayload = {
         consentReceipts: [],
-        webauthnCredentialId: "test-credential"
+        webauthnCredentialId: "test-credential",
+        signingKeyId: "test-key-id"
       };
 
       // Access the mocked generateProof
@@ -440,7 +458,7 @@ describe("Wallet Store", () => {
         returnedProof = await result.current.generateProof(request, "passphrase");
       });
 
-      expect(mockGenerateProof).toHaveBeenCalledWith(request, mockPayload, { walletId: "test-wallet-id", passphrase: "passphrase" });
+      expect(mockGenerateProof).toHaveBeenCalledWith(request, mockPayload, { walletId: "test-wallet-id", keyId: "test-key-id", passphrase: "passphrase" });
       expect(returnedProof).toEqual(mockProof);
       expect(result.current.vaultPayload?.consentReceipts).toHaveLength(1);
       expect(encryptVault).toHaveBeenCalled();
@@ -473,7 +491,7 @@ describe("Wallet Store", () => {
 
       act(() => {
         store.setState({
-          vaultPayload: { consentReceipts: [] },
+          vaultPayload: { consentReceipts: [], signingKeyId: "test-key-id" },
           walletId: "test-wallet-id"
         });
       });
@@ -492,7 +510,7 @@ describe("Wallet Store", () => {
       expect(mockGenerateProof).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),
-        { walletId: "test-wallet-id", passphrase: undefined }
+        { walletId: "test-wallet-id", keyId: "test-key-id", passphrase: undefined }
       );
       expect(returnedProof).toEqual(mockProof);
       // Should not update vault when no passphrase provided

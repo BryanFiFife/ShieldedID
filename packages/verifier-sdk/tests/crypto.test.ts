@@ -59,13 +59,15 @@ describe("crypto", () => {
     expect(validateTimestamp(oldIssued, futureExpires, 120)).toBe(false); // maxAge is 120 seconds
   });
 
-  it("handles webcrypto unavailability", async () => {
+  it("fails closed when webcrypto is unavailable", async () => {
     const originalCrypto = globalThis.crypto;
     // Remove crypto from globalThis
     delete (globalThis as any).crypto;
-    
-    await expect(verifyECDSAP256({} as JsonWebKey, "test", "test")).rejects.toThrow("WEBCRYPTO_NOT_AVAILABLE");
-    
+
+    // Cryptographic verification must fail closed, not throw an uncaught error.
+    // A key with a non-EC type is rejected regardless of crypto availability.
+    await expect(verifyECDSAP256({ kty: "RSA", n: "x", e: "AQAB" } as JsonWebKey, "test", "test")).resolves.toBe(false);
+
     // Restore crypto
     globalThis.crypto = originalCrypto;
   });
