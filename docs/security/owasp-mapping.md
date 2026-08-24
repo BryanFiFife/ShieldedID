@@ -1,205 +1,71 @@
-# Shielded ID OWASP Top 10 Mapping
-## Comprehensive Security Control Implementation
+# Shielded ID OWASP Top 10 Risk Mapping
 
-**Document Version**: 1.0
-**Date**: January 13, 2026
-**Status**: Production Ready
+**Applies to:** ShieldedID v1.6.x  
+**Status:** Security implementation notes - not certification or complete coverage
 
----
+## Purpose
 
-## Executive Summary
+This document maps repository controls to OWASP Top 10:2021 risk areas. It is not an OWASP certification, ASVS assessment, penetration-test report or statement of 100% coverage.
 
-Shielded ID implements comprehensive security controls addressing all OWASP Top 10 vulnerabilities. This document maps each OWASP Top 10 risk to specific Shielded ID security implementations, demonstrating 100% coverage of critical web application security risks.
+The previous version claimed complete OWASP coverage, FIPS compliance, TLS 1.3 enforcement, signed releases, immutable cryptographic audit logs, automated patching, external penetration testing, ASVS Level 3 compliance, NIST implementation, fixed security response metrics and other facts that were not established by this repository. Those claims are withdrawn.
 
-## OWASP Top 10 2021 Coverage Matrix
+## Risk-oriented mapping
 
-| OWASP Risk | Risk Level | Shielded ID Implementation | Status |
-|------------|------------|---------------------------|--------|
-| A01:2021 - Broken Access Control | Critical | ✅ Complete | Implemented |
-| A02:2021 - Cryptographic Failures | Critical | ✅ Complete | Implemented |
-| A03:2021 - Injection | Critical | ✅ Complete | Implemented |
-| A04:2021 - Insecure Design | Critical | ✅ Complete | Implemented |
-| A05:2021 - Security Misconfiguration | Critical | ✅ Complete | Implemented |
-| A06:2021 - Vulnerable Components | Critical | ✅ Complete | Implemented |
-| A07:2021 - Identification/Authentication Failures | Critical | ✅ Complete | Implemented |
-| A08:2021 - Software/Data Integrity Failures | Critical | ✅ Complete | Implemented |
-| A09:2021 - Security Logging/Monitoring Failures | High | ✅ Complete | Implemented |
-| A10:2021 - Server-Side Request Forgery | High | ✅ Complete | Implemented |
+| OWASP Top 10:2021 area | Relevant ShieldedID controls | Remaining/deployment considerations |
+| --- | --- | --- |
+| A01 Broken Access Control | Registry/admin route controls, signature-based wallet/issuer trust, status/revocation checks, request binding | Operator account governance, infrastructure IAM, reverse proxy policy and administrative access require deployment review |
+| A02 Cryptographic Failures | Bulletproofs/Ristretto255, Pedersen commitments, ECDSA P-256 signatures, AES-256-GCM vault encryption, Argon2id | Independent cryptographic review, endpoint compromise, key custody and platform implementation remain relevant |
+| A03 Injection | Fastify request schemas/Zod validation and parameterised database access in security-sensitive paths | Review every newly added query/parser and deployment-specific integrations |
+| A04 Insecure Design | Fail-closed verifier trust model, minimal-disclosure supported predicates, issuer-bound commitment proofs, explicit unsupported-predicate rejection | Threat model must be revisited as new claim types, offline modes or trust paths are introduced |
+| A05 Security Misconfiguration | Security middleware, rate limiting, explicit environment secrets, CI builds | TLS, headers, secrets, CORS, reverse proxies, databases and hosting configuration are deployment responsibilities |
+| A06 Vulnerable and Outdated Components | Frozen lockfile install, `pnpm audit` gate, RustSec `cargo-audit`, generated-WASM reproducibility check | Advisory feeds are not exhaustive; remediation and update policy remain operator responsibilities |
+| A07 Identification and Authentication Failures | Wallet proof-of-possession registration, exact key-ID verification, issuer/wallet revocation, dedicated proof-signing key, WebAuthn kept in its correct authenticator role | Account recovery, admin authentication and deployment IAM require separate testing |
+| A08 Software and Data Integrity Failures | Signed proof responses, issuer signatures, reproducible Rust/WASM build comparison, release CI gate | Git tag signing, branch protection, trusted build runners and artifact provenance are repository/operator governance choices |
+| A09 Security Logging and Monitoring Failures | Registry audit events and application logging hooks | Log completeness, retention, alerting, SIEM integration, access control and incident response are deployment-specific |
+| A10 Server-Side Request Forgery | Current core trust lookups target configured registry endpoints rather than arbitrary user-supplied destinations | Any future URL-fetching or webhook feature requires dedicated SSRF analysis and egress controls |
 
----
+## Cryptographic scope
 
-## Detailed Control Mappings
+The production ZK surface is intentionally narrow:
 
-### A01:2021 - Broken Access Control
+- `AGE_OVER` uses an issuer-attested date-of-birth commitment and a bound proof;
+- `KYC_LEVEL` uses an issuer-attested assurance-level commitment and a bound proof;
+- `CONTINUITY` is protected by the signed wallet response and verifier-specific subject derivation.
 
-**Shielded ID Controls:**
-- **Pairwise Subject IDs**: Each verifier receives unique, unlinkable subject identifiers
-- **Context Binding**: Proofs bound to specific verifier origin + nonce + expiry
-- **Registry-Based Authorization**: All wallet/issuer keys validated against revocation status
-- **Minimal Disclosure**: No unnecessary PII shared beyond proof requirements
+Earlier prototype predicates that lack real cryptographic verification fail closed and are not part of the supported security surface.
 
-**Implementation Files:**
-- `packages/verifier-sdk/src/verification.ts` - Context validation
-- `apps/registry-server/src/middleware/auth.ts` - Access control middleware
-- `packages/verifier-sdk/src/subject-ids.ts` - Pairwise ID generation
+## CI evidence
 
-### A02:2021 - Cryptographic Failures
+The blocking CI pipeline currently checks:
 
-**Shielded ID Controls:**
-- **Bulletproofs ZK Proofs**: Zero-knowledge range proofs using Ristretto255
-- **WebCrypto API**: FIPS-compliant cryptographic operations in browser
-- **HKDF Key Derivation**: Secure key derivation for subject IDs
-- **TLS 1.3 Required**: Transport encryption with perfect forward secrecy
+- real Rust/WASM proof generation and verification;
+- wrong-bound, wrong-context, tampered-proof and under-threshold rejection;
+- witness non-disclosure in supported proof public inputs;
+- generated-WASM reproducibility;
+- unit/build coverage on Linux and unit coverage on Windows;
+- live issuer-registry-wallet-verifier integration, including revocation paths;
+- known placeholder/simulated cryptographic coverage markers;
+- high/critical JavaScript dependency advisories;
+- RustSec advisories for committed Rust lockfiles.
 
-**Implementation Files:**
-- `packages/age-zk/src/lib.rs` - Bulletproofs implementation
-- `packages/verifier-sdk/src/crypto/webcrypto.ts` - WebCrypto operations
-- `apps/registry-server/src/crypto/keys.ts` - Key management
+Passing these checks is useful evidence for the exact commit. It does not prove that every OWASP weakness is absent.
 
-### A03:2021 - Injection
+## What is not claimed
 
-**Shielded ID Controls:**
-- **Prepared Statements**: All database queries use parameterized queries
-- **Input Validation**: Strict schema validation for all API inputs
-- **Context Binding**: Proofs cryptographically bound to request context
-- **No Dynamic Queries**: Static query patterns with bound parameters
+ShieldedID does not claim, unless supported by separately identified external evidence:
 
-**Implementation Files:**
-- `apps/registry-server/src/db/queries.ts` - Parameterized database queries
-- `packages/verifier-sdk/src/validation.ts` - Input validation schemas
-- `apps/registry-server/migrations/001_initial_schema.ts` - Safe schema design
+- OWASP Top 10 "100% coverage";
+- OWASP ASVS certification or any ASVS level;
+- NIST Cybersecurity Framework certification or complete implementation;
+- FIPS validation of the application or its cryptographic modules;
+- external penetration testing;
+- zero vulnerabilities;
+- immutable or cryptographically complete audit logging;
+- signed GitHub releases;
+- 24/7 security operations or fixed MTTD/MTTR metrics.
 
-### A04:2021 - Insecure Design
+## Recommended external assurance
 
-**Shielded ID Controls:**
-- **Zero-Trust Architecture**: No implicit trust between components
-- **Minimal Attack Surface**: Browser-only cryptography, server holds no secrets
-- **Fail-Safe Defaults**: Deny-by-default security policies
-- **Privacy-by-Design**: Cryptographic privacy guarantees built into protocol
+Before high-risk production use, perform deployment-specific threat modelling, application penetration testing, dependency/supply-chain review, cryptographic review, secrets/IAM assessment, infrastructure hardening review and incident-response testing.
 
-**Implementation Files:**
-- `docs/spec/protocol-rfc.md` - Security architecture specification
-- `packages/verifier-sdk/src/verification.ts` - Zero-trust verification logic
-- `apps/registry-server/src/middleware/security.ts` - Security middleware
-
-### A05:2021 - Security Misconfiguration
-
-**Shielded ID Controls:**
-- **Secure Defaults**: Production-hardened default configurations
-- **Configuration Validation**: Runtime validation of security settings
-- **Environment Separation**: Clear separation of dev/prod configurations
-- **Automated Security Checks**: Build-time security configuration validation
-
-**Implementation Files:**
-- `apps/registry-server/src/config/security.ts` - Security configuration
-- `validate-implementation.ts` - Configuration validation
-- `docker-compose.yml` - Secure container configuration
-
-### A06:2021 - Vulnerable Components
-
-**Shielded ID Controls:**
-- **Minimal Dependencies**: Carefully selected, actively maintained packages
-- **Dependency Scanning**: Automated vulnerability scanning in CI/CD
-- **Regular Updates**: Automated dependency updates with security patches
-- **Isolated Components**: WASM isolation for cryptographic operations
-
-**Implementation Files:**
-- `package.json` - Dependency declarations with security constraints
-- `.github/workflows/security.yml` - Automated security scanning
-- `packages/age-zk/Cargo.toml` - Rust dependency management
-
-### A07:2021 - Identification/Authentication Failures
-
-**Shielded ID Controls:**
-- **Cryptographic Authentication**: Public key cryptography for all authentication
-- **Revocation Checking**: Real-time validation of key revocation status
-- **Replay Protection**: Nonce-based replay attack prevention
-- **Session Binding**: Cryptographic binding of authentication to session context
-
-**Implementation Files:**
-- `packages/verifier-sdk/src/verification.ts` - Authentication verification
-- `apps/registry-server/src/routes/auth.ts` - Authentication endpoints
-- `packages/verifier-sdk/src/revocation.ts` - Revocation checking
-
-### A08:2021 - Software/Data Integrity Failures
-
-**Shielded ID Controls:**
-- **Cryptographic Integrity**: All data protected with digital signatures
-- **Immutable Audit Logs**: Cryptographically verifiable audit trails
-- **Code Signing**: All releases cryptographically signed
-- **Integrity Verification**: Runtime verification of critical components
-
-**Implementation Files:**
-- `apps/registry-server/src/observability/audit.ts` - Audit logging
-- `packages/verifier-sdk/src/signatures.ts` - Digital signature verification
-- `SECURITY.md` - Code signing and integrity procedures
-
-### A09:2021 - Security Logging/Monitoring Failures
-
-**Shielded ID Controls:**
-- **Comprehensive Logging**: All security events logged with context
-- **Real-time Monitoring**: Automated alerting for security anomalies
-- **Audit Trails**: Immutable, cryptographically verifiable logs
-- **Log Integrity**: Protected against tampering and deletion
-
-**Implementation Files:**
-- `apps/registry-server/src/observability/metrics.ts` - Security monitoring
-- `apps/registry-server/src/observability/logging.ts` - Security event logging
-- `apps/registry-server/src/admin/Dashboard.tsx` - Monitoring dashboard
-
-### A10:2021 - Server-Side Request Forgery
-
-**Shielded ID Controls:**
-- **No Server-Side Requests**: Browser-only architecture eliminates SSRF
-- **Registry Isolation**: Registry only accepts predefined request patterns
-- **Input Validation**: Strict validation of all external inputs
-- **Network Segmentation**: Isolated network zones for different components
-
-**Implementation Files:**
-- `apps/wallet-pwa/src/lib/api.ts` - Client-side only API calls
-- `apps/registry-server/src/middleware/cors.ts` - CORS protection
-- `apps/registry-server/src/middleware/rate-limit.ts` - Request rate limiting
-
----
-
-## Security Testing Results
-
-### Automated Security Testing
-- **SAST**: Static Application Security Testing passes all checks
-- **DAST**: Dynamic Application Security Testing shows no vulnerabilities
-- **Dependency Scanning**: All dependencies pass security audits
-- **Container Scanning**: Docker images pass security scans
-
-### Penetration Testing
-- **External Penetration Test**: Completed December 2025, zero critical findings
-- **Code Review**: Security-focused code review completed for all components
-- **Threat Modeling**: Comprehensive threat model validated against implementation
-
-### Compliance Validation
-- **OWASP ASVS Level 3**: 100% compliance achieved
-- **NIST Cybersecurity Framework**: Fully implemented
-- **ISO 27001 Controls**: 95% coverage with roadmap to 100%
-
----
-
-## Continuous Security Monitoring
-
-### Automated Controls
-- **CI/CD Security Gates**: All builds must pass security checks
-- **Runtime Security Monitoring**: Real-time threat detection and alerting
-- **Vulnerability Management**: Automated patching and updates
-- **Incident Response**: 24/7 security incident response procedures
-
-### Security Metrics
-- **Mean Time to Detect (MTTD)**: < 5 minutes
-- **Mean Time to Respond (MTTR)**: < 15 minutes
-- **Security Incident Rate**: 0.001% of total transactions
-- **False Positive Rate**: < 0.1%
-
----
-
-## Conclusion
-
-Shielded ID demonstrates comprehensive security control implementation addressing all OWASP Top 10 risks. The zero-knowledge architecture provides inherent security benefits while maintaining strict adherence to security best practices. All controls are validated through automated testing and regular security assessments.
-
-**Overall Security Posture**: 🟢 **EXCELLENT** - 100% OWASP Top 10 coverage with additional privacy protections.
+See `SECURITY.md`, `audit.md` and `COMPLIANCE.md` for the current assurance boundary.

@@ -1,6 +1,6 @@
 [package]
 name = "shielded-age-zk"
-version = "1.5.0"
+version = "1.6.1"
 edition = "2021"
 description = "Zero-knowledge bound proofs for Shielded ID"
 license = "Apache-2.0"
@@ -9,11 +9,11 @@ license = "Apache-2.0"
 crate-type = ["cdylib"]
 
 [dependencies]
-bulletproofs = "3.0.1"
+bulletproofs = "5.0.0"
 clear_on_drop = { version = "0.2", features = ["no_cc"] }
-curve25519-dalek-ng = "3.0"
-merlin = "2.0"
-rand = "0.7"
+curve25519-dalek = "=4.1.3"
+merlin = "3.0"
+rand = "0.8"
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
@@ -21,6 +21,7 @@ base64 = "0.21"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
+getrandom = { version = "0.2", features = ["js"] }
 
 [dependencies.web-sys]
 version = "0.3"

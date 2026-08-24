@@ -1,5 +1,18 @@
 # ShieldedID Changelog
 
+## [1.6.1] - 2026-08-24
+
+### Release Integrity
+- Replaced stale v1.5 audit and release-note files that overstated ISO/IEC 27001 compliance, control counts, security assurance and production readiness.
+- Added explicit JavaScript dependency advisory checking with `pnpm audit`, failing on high or critical advisories.
+- Added RustSec advisory checking with `cargo-audit` for the Rust lockfiles.
+- Added an aggregate CI release gate that depends on the WASM/adversarial build, dependency audit, Linux tests, Windows tests and cryptographic truth gate.
+- Documented the release rule that the final tag must point to the exact `master` SHA that passes a fresh post-merge `push` CI run.
+
+### Versioning
+- Updated all JavaScript workspace packages and registry API metadata to 1.6.1.
+- No change to the v1.6.0 cryptographic protocol construction or supported predicate set.
+
 ## [1.6.0] - 2026-08-24
 
 ### Security Improvements

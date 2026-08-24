@@ -115,7 +115,7 @@ export function Companion() {
   return (
     <div className="panel">
       <h2>Companion</h2>
-      <p>Mode: {mode} • {status}</p>
+      <p>Mode: {mode} â€” {status}</p>
       <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 12 }}>
         {messages.map((message) => (
           <div key={message.id} style={{ marginBottom: 8 }}>

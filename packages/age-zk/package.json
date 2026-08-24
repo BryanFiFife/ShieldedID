@@ -1,6 +1,6 @@
 {
   "name": "@shielded-id/age-zk",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Privacy-preserving numeric bound proofs using Bulletproofs/Ristretto255",
   "license": "Apache-2.0",
   "type": "module",
@@ -19,9 +19,8 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "wasm-pack": "^0.12.0",
-    "vitest": "^1.4.0",
-    "@vitest/coverage-v8": "^1.4.0",
+    "vitest": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.4.5",
     "@types/node": "^20.11.30"
   },

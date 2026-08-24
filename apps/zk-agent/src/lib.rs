@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose, Engine as _};
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
-use curve25519_dalek_ng::ristretto::CompressedRistretto;
-use curve25519_dalek_ng::scalar::Scalar;
+use curve25519_dalek::ristretto::CompressedRistretto;
+use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
@@ -44,9 +44,6 @@ fn transcript(min: u64, source_commitment: &[u8; 32], context: &str) -> Transcri
     transcript
 }
 
-/// Generate a real Bulletproof that cryptographically proves value >= min.
-/// The range proof is over delta = value - min, and the verifier checks that
-/// its commitment equals C(value) - min*B. No witness value is serialized.
 pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, Box<dyn std::error::Error>> {
     let delta = value.checked_sub(min).ok_or("value does not satisfy >= bound")?;
     let mut rng = thread_rng();
@@ -57,12 +54,12 @@ pub fn prove_ge(value: u64, min: u64, context: &str) -> Result<ProofBundle, Box<
     rng.fill(&mut blinding_bytes);
     let blinding = Scalar::from_bytes_mod_order(blinding_bytes);
     let source_commitment = pc_gens.commit(Scalar::from(value), blinding).compress().to_bytes();
-    let mut transcript = transcript(min, &source_commitment, context);
+    let mut proof_transcript = transcript(min, &source_commitment, context);
 
     let (proof, delta_commitment) = RangeProof::prove_single(
         &bp_gens,
         &pc_gens,
-        &mut transcript,
+        &mut proof_transcript,
         delta,
         &blinding,
         64,
@@ -103,7 +100,11 @@ pub fn verify_ge_components(
     if parts.next() != Some(PUBLIC_INPUT_VERSION) || parts.next() != Some("GE") {
         return Ok(false);
     }
-    if parts.next() != Some(min.to_string().as_str()) {
+    let encoded_bound = match parts.next() {
+        Some(value) => value,
+        None => return Ok(false),
+    };
+    if encoded_bound.parse::<u64>().ok() != Some(min) {
         return Ok(false);
     }
     let source_b64 = parts.next().ok_or("missing source commitment")?;
@@ -116,12 +117,18 @@ pub fn verify_ge_components(
     if source_bytes.len() != 32 {
         return Ok(false);
     }
-    let source_compressed = CompressedRistretto::from_slice(&source_bytes);
+    let source_compressed = match CompressedRistretto::from_slice(&source_bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
     let source_point = match source_compressed.decompress() {
         Some(point) => point,
         None => return Ok(false),
     };
-    let delta_compressed = CompressedRistretto::from_slice(&commitment_bytes);
+    let delta_compressed = match CompressedRistretto::from_slice(&commitment_bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
 
     let pc_gens = PedersenGens::default();
     let expected_delta = (source_point - pc_gens.B * Scalar::from(min)).compress();
@@ -134,12 +141,12 @@ pub fn verify_ge_components(
         Err(_) => return Ok(false),
     };
     let bp_gens = BulletproofGens::new(64, 1);
-    let mut transcript = transcript(min, &source_compressed.to_bytes(), context);
+    let mut verify_transcript = transcript(min, &source_compressed.to_bytes(), context);
 
     Ok(proof.verify_single(
         &bp_gens,
         &pc_gens,
-        &mut transcript,
+        &mut verify_transcript,
         &delta_compressed,
         64,
     ).is_ok())

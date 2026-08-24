@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose, Engine as _};
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
-use curve25519_dalek_ng::ristretto::CompressedRistretto;
-use curve25519_dalek_ng::scalar::Scalar;
+use curve25519_dalek::ristretto::CompressedRistretto;
+use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 use rand::{rngs::StdRng, SeedableRng};
 use wasm_bindgen::prelude::*;
@@ -104,8 +104,6 @@ fn proof_transcript(op: &[u8], bound: u64, source_commitment: &[u8; 32], context
     transcript
 }
 
-/// Commit to a numeric value using a caller-supplied 32-byte blinding secret.
-/// The blinding secret must be generated with a CSPRNG and kept private.
 #[wasm_bindgen]
 pub fn commit_value(value: u64, blinding: &[u8]) -> Result<Vec<u8>, JsValue> {
     let blinding = scalar_from_blinding(blinding)?;
@@ -113,10 +111,6 @@ pub fn commit_value(value: u64, blinding: &[u8]) -> Result<Vec<u8>, JsValue> {
     Ok(pc_gens.commit(Scalar::from(value), blinding).compress().to_bytes().to_vec())
 }
 
-/// Prove that the source commitment opens to a value >= min.
-/// The Bulletproof covers delta = value - min. The range-proof commitment is
-/// algebraically tied to the source commitment, preventing substitution of an
-/// unrelated in-range witness. Raw values never enter public inputs.
 #[wasm_bindgen]
 pub fn prove_ge_bound(
     value: u64,
@@ -158,9 +152,6 @@ pub fn prove_ge_bound(
     })
 }
 
-/// Prove that the source commitment opens to a value <= max.
-/// The proof covers delta = max - value with the negated source blinding, so
-/// the verifier can enforce C_delta == max*B - C_source.
 #[wasm_bindgen]
 pub fn prove_le_bound(
     value: u64,
@@ -222,8 +213,14 @@ fn verify_bound(
         return Ok(false);
     }
 
-    let delta_commitment = CompressedRistretto::from_slice(commitment);
-    let source_compressed = CompressedRistretto::from_slice(&parsed.source_commitment);
+    let delta_commitment = match CompressedRistretto::from_slice(commitment) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
+    let source_compressed = match CompressedRistretto::from_slice(&parsed.source_commitment) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
     let source_point = match source_compressed.decompress() {
         Some(point) => point,
         None => return Ok(false),

@@ -1,331 +1,155 @@
 # Shielded ID Implementation Roadmap
 
-**Last Updated**: January 13, 2026  
-**Current Status**: Production Ready (Phase 1 Complete)  
-**Next Phases**: 2-3 on roadmap for Q2-Q3 2026
-
----
-
-## Phase 1: Core System (✅ COMPLETE)
-
-**Status**: Shipped in v1.5.0  
-**Scope**: Bulletproofs circuits for age/KYC verification  
-**Complexity**: Moderate
-
-### Implemented Predicates
-
-**Age Verification**:
-- `AGE_OVER` - Prove age ≥ threshold (18, 21, 25, etc.)
-- Bulletproofs range proof via Ristretto255 + Merlin transcripts
-
-**KYC Verification**:
-- `KYC_LEVEL` - Prove KYC level ≥ minimum (1, 2, 3, etc.)
-- Same Bulletproofs engine as age verification
+**Last updated:** 2026-08-24  
+**Current stable protocol line:** v1.6.x hardened implementation  
+**Status:** Supported proof surface implemented and CI-gated; external cryptographic/security review still recommended before high-risk deployment
 
-**Wallet Continuity**:
-- `CONTINUITY` - Pairwise subject IDs per verifier
-- Prevents cross-site correlation via signature binding
+## Current supported surface
 
-### Architecture
+ShieldedID v1.6.x intentionally supports only the claim types for which the current implementation has a real verification path:
 
-```
-Frontend (Wallet PWA)
-├─ React 18 + Vite
-├─ AES-256-GCM encrypted vault
-├─ WASM agent integration
-└─ Offline proof generation
+- `AGE_OVER`: issuer-attested date-of-birth threshold proof;
+- `KYC_LEVEL`: issuer-attested numeric assurance-level threshold proof;
+- `CONTINUITY`: verifier-specific subject identifier protected by the signed wallet response.
 
-Backend (Registry Server)
-├─ Express + PostgreSQL
-├─ Key management & revocation
-├─ Non-custodial design
-└─ Audit logging
+Unsupported historical/prototype predicates fail closed. They are not counted as implemented merely because they can be represented as request metadata.
 
-Cryptography (age-zk)
-├─ Rust + WASM
-├─ Bulletproofs/Ristretto255
-├─ Merlin transcripts
-└─ SHA-256 hashing
+## Current architecture
 
-SDK (Verifier SDK)
-├─ TypeScript
-├─ Proof validation
-├─ Context binding checks
-├─ Revocation verification
-└─ ECDSA P-256 verification
-```
+### Wallet PWA
 
-### Technical Highlights
+- encrypted local vault using AES-256-GCM;
+- Argon2id passphrase derivation;
+- private numeric witness/blinding storage;
+- issuer-bound Bulletproof generation through the Rust/WASM package;
+- dedicated registered P-256 proof-signing key;
+- WebAuthn retained as an authentication mechanism rather than misused as generic signing.
 
-- ✅ Native Bulletproofs implementation (Rust/WASM)
-- ✅ End-to-end ZK verification in SDK
-- ✅ Context binding (origin + nonce + expiry)
-- ✅ Pairwise subject IDs (unlinkable per-verifier)
-- ✅ Revocation checking before proof acceptance
-- ✅ 91% code coverage, 365+ tests
+### Registry server
 
-### Deployment
+- Fastify/SQLite reference implementation;
+- wallet signing-key registration, lookup, expiry/status and revocation;
+- issuer-key registration, lookup, status and revocation;
+- audit events for defined trust/key lifecycle operations;
+- fail-closed trust dependency for the default verifier path.
 
-- ✅ Docker support (all services)
-- ✅ PostgreSQL migrations included
-- ✅ Health checks & Prometheus metrics
-- ✅ Audit logging & HSTS
-- ✅ Rate limiting & WAF ready
+### Cryptography
 
----
+- Bulletproofs over Ristretto255;
+- Pedersen commitments;
+- issuer-authenticated source commitments;
+- algebraically linked bound proofs for supported numeric predicates;
+- CSPRNG-backed proving/blinding entropy;
+- transcript/request context binding;
+- generated WASM rebuilt and compared in CI.
 
-## Phase 2: Extended Predicates (📅 Q2 2026)
+### Verifier SDK
 
-**Planned Scope**: Equality predicates and composite claims  
-**Estimated Effort**: 2-3 weeks  
-**Priority**: High
+- exact request/nonce/origin/expiry validation;
+- exact wallet signing-key lookup;
+- wallet P-256 signature verification;
+- issuer key/status lookup and issuer attestation signature verification;
+- source-commitment equality check;
+- real Bulletproof verification for the requested bound/context;
+- unsupported predicates rejected rather than plaintext-asserted.
 
-### New Predicates
+## Release assurance
 
-**Equality Verification** (new):
-- `COUNTRY` - Prove country == "US", "GB", "CA", etc.
-- `REGION` - Prove region == "California", "England", etc.
-- `STATE_OR_PROVINCE` - Prove state/province matches
-- `DOCUMENT_TYPE` - Prove document type == "passport", "license", etc.
+The release pipeline is expected to include:
 
-**Composite Claims** (new):
-- `AGE_AND_KYC` - Prove (age ≥ 18) AND (kyc ≥ 2)
-- Multi-predicate support with single ZK proof
-- Automatic circuit detection
+- reproducible Rust/WASM build;
+- adversarial proof checks;
+- Linux unit/build/live E2E tests;
+- Windows unit tests;
+- issuer and wallet-key revocation rejection;
+- placeholder/simulated cryptographic coverage rejection;
+- frozen dependency installation;
+- JavaScript high/critical advisory gate;
+- RustSec advisory gate;
+- fresh post-merge `master` CI before tagging.
 
-### Implementation Plan
+Passing CI is internal release evidence for the exact commit. It is not an external cryptographic audit, penetration test or compliance certification.
 
-1. **Rust Circuits** (~3 days)
-   - Equality circuit via Bulletproofs
-   - Composite proof aggregation
-   - Merlin transcript updates
+## Known privacy limitation
 
-2. **TypeScript Integration** (~2 days)
-   - New `PredicateOperator` enum
-   - Composite claim types
-   - Verifier logic updates
+Pairwise subject IDs reduce direct subject-ID reuse across verifier origins. They do **not** make the current credential presentation fully unlinkable.
 
-3. **Testing** (~2 days)
-   - 30+ new test cases
-   - E2E composite scenarios
-   - Performance benchmarks
+The issuer currently signs a persistent Pedersen source commitment. Reuse of that same commitment can provide a correlation handle to colluding verifiers. ShieldedID v1.6.x therefore does not claim anonymous-credential unlinkability.
 
-### Design Decisions
+## Near-term roadmap
 
-- ✅ **Consistency**: All proofs use Bulletproofs (same foundation)
-- ✅ **ZK Soundness**: Maintains zero-knowledge properties
-- ✅ **Backward Compatible**: Existing proofs work unchanged
-- ✅ **No New Dependencies**: Reuses existing cryptographic stack
+### 1. Independent assurance
 
----
+Priority work before positioning the protocol for high-risk identity/KYC deployments:
 
-## Phase 3: Location & Driving Credentials (📅 Q3 2026)
+- independent review of the issuer-bound Bulletproof construction;
+- review of transcript/context binding and commitment relations;
+- application penetration testing of wallet, registry and verifier integrations;
+- dependency/supply-chain assessment;
+- deployment threat model and secrets/IAM review.
 
-**Planned Scope**: Location verification and driving license predicates  
-**Estimated Effort**: 3-4 weeks
+### 2. Stronger unlinkable credential layer
 
-### Location Predicates
+Research target: replace or wrap the persistent issuer commitment with an independently reviewed rerandomizable credential/signature construction so a holder can prove predicates without presenting a stable cross-verifier commitment handle.
 
-- `EU_RESIDENT` - Set membership across EU countries
-- `POSTAL_CODE_PREFIX` - First N digits match verification
-- `CITY_REGION` - Custom geographic boundaries
+Any candidate must preserve:
 
-### Driving License Predicates
+- issuer binding;
+- selective disclosure/minimal disclosure;
+- predicate proof support;
+- revocation strategy;
+- browser/PWA feasibility;
+- verifier interoperability;
+- clear security assumptions and external reviewability.
 
-- `LICENSE_CLASS` - Prove class ≥ minimum (A, B, C, etc.)
-- `VEHICLE_CATEGORY` - Prove license covers vehicle type
-- `ENDORSEMENT` - Prove required endorsement present
-- `RESTRICTION` - Prove restriction absent
-- `LICENSE_VALID` - Prove expiry > now
+This is research/roadmap work, not an implemented v1.6.x guarantee.
 
-### Additional Credentials
+### 3. Additional predicates
 
-- `DOCUMENT_VALID` - Generic expiry checking
-- `CREDENTIAL_LEVEL` - Credential hierarchy verification
-- `SANCTIONS_CLEAR` - Sanctions list checking
+Potential future predicates may include equality, set-membership, composite and expiry/location-style claims. None should be promoted to the production surface until it has:
 
----
+1. an explicit credential representation and issuer binding;
+2. a real cryptographic construction appropriate to that predicate;
+3. adversarial tests showing invalid witnesses cannot be accepted;
+4. privacy analysis for disclosed proof material;
+5. verifier fail-closed behaviour;
+6. protocol/versioning documentation;
+7. CI coverage and preferably external cryptographic review for novel constructions.
 
-## Future Roadmap (2027+)
+A generic Bulletproof range proof is not automatically suitable for string equality, arbitrary set membership or every future predicate family.
 
-**Potential Extensions**:
-- Hardware security module (HSM) integration
-- Multi-signature proof requests
-- Biometric binding (with privacy preservation)
-- Decentralized registry alternative
-- Proof batching for high-volume scenarios
-- Threshold cryptography (M-of-N proofs)
+### 4. Operational hardening
 
----
+Potential implementation work includes:
 
-## Design Principles
+- deployment templates and secret-management guidance;
+- stronger branch/release provenance controls;
+- observability and incident-response integration examples;
+- backup/restoration test harnesses for the registry;
+- scalable registry persistence options where required by deployment load;
+- reproducible/signed release artifact provenance where appropriate.
 
-### Cryptographic Consistency
-All proofs use Bulletproofs for:
-- Proven security properties
-- Audit simplicity (single primitive)
-- Performance consistency
-- No security variance
+## Design principles
 
-### Backward Compatibility
-- ✅ Old proofs work unchanged
-- ✅ New predicates opt-in
-- ✅ Version negotiation supported
-- ✅ Gradual rollout possible
+- **Truthful capability surface:** advertise only predicates that have a real enforced verification path.
+- **Fail closed:** missing trust state, unsupported predicates and invalid cryptographic material reject.
+- **Issuer binding:** holder-generated proofs must remain bound to issuer-authenticated credential material.
+- **Minimal disclosure:** do not expose the private witness merely to simplify verification.
+- **Request binding:** proof use must be constrained to the intended verifier/request context.
+- **Evidence before claims:** CI evidence, independent audits and formal certifications must not be conflated.
+- **Protocol evolution by version:** security-significant format/construction changes require explicit versioning and migration rules.
 
-### Privacy by Design
-- ✅ Minimal disclosure everywhere
-- ✅ Pairwise subject IDs standard
-- ✅ No cross-verifier correlation
-- ✅ Context binding enforced
+## Out-of-scope claims
 
-### Production Readiness
-- ✅ 90%+ code coverage required
-- ✅ E2E tests mandatory
-- ✅ Security audit required
-- ✅ Performance benchmarks tracked
+The roadmap does not assert:
 
----
+- complete unlinkability;
+- ISO/IEC 27001 certification;
+- GDPR/UK GDPR compliance by default;
+- OWASP/NIST percentage compliance;
+- zero vulnerabilities;
+- a completed external penetration test;
+- complete production readiness for every deployment;
+- support for historical prototype predicate families.
 
-## Technical Decisions
-
-### Why Bulletproofs?
-
-- ✅ Proven mathematical foundation
-- ✅ Compact proofs (log-scale)
-- ✅ Efficient verification
-- ✅ Single primitive for all predicates
-- ✅ Industry adoption (Mozilla, Tor, etc.)
-
-### Why Ristretto255?
-
-- ✅ Curve25519 hardening
-- ✅ Eliminating cofactor issues
-- ✅ Hash-to-group standardization
-- ✅ WebCrypto compatibility path
-
-### Why WASM?
-
-- ✅ Browser-native execution
-- ✅ Performance (near-native speeds)
-- ✅ Portability (no build required)
-- ✅ Security (isolation from JS)
-
-### Why Pairwise IDs?
-
-- ✅ GDPR Article 5 compliance
-- ✅ No cross-verifier tracking
-- ✅ User privacy preservation
-- ✅ Unlinkability guarantee
-
----
-
-## Testing Strategy
-
-### Unit Tests
-- ✅ Circuit correctness
-- ✅ Proof generation
-- ✅ Verification logic
-- ✅ Edge cases
-
-### Integration Tests
-- ✅ End-to-end flows
-- ✅ Multi-predicate scenarios
-- ✅ Revocation handling
-- ✅ Context binding
-
-### Performance Tests
-- ✅ Proof generation time
-- ✅ Verification latency
-- ✅ Registry lookup time
-- ✅ Bundle size impact
-
-### Security Tests
-- ✅ Tampered proof rejection
-- ✅ Replay attack prevention
-- ✅ Signature verification
-- ✅ Revocation enforcement
-
----
-
-## Contribution Guidelines
-
-### Code Quality
-- TypeScript strict mode
-- ESLint enforcement
-- 90%+ code coverage
-- No `any` types
-
-### Documentation
-- RFC-style specs for new predicates
-- Inline circuit documentation
-- Test case explanations
-- Migration guides
-
-### Cryptographic Changes
-- Independent security review required
-- Academic reference provided
-- Proof of concept before production
-- Audit by external party
-
----
-
-## Timeline & Effort Estimates
-
-| Phase | Scope | Duration | Est. Effort | Status |
-|-------|-------|----------|-------------|--------|
-| **1** | Core (age/kyc) | 6 months | 240h | ✅ Complete |
-| **2** | Extended predicates | 3 weeks | 120h | 📅 Q2 2026 |
-| **3** | Location/driving | 4 weeks | 160h | 📅 Q3 2026 |
-| **Future** | Advanced features | TBD | TBD | 🔮 2027+ |
-
----
-
-## Release Management
-
-**Version Scheme**: MAJOR.MINOR.PATCH
-- **MAJOR**: Breaking predicate changes
-- **MINOR**: New predicates, backward compatible
-- **PATCH**: Bug fixes, performance improvements
-
-**Current**: v1.5.0 (Phase 1 complete, production ready)  
-**Next Major**: v2.0.0 (Phase 2 complete, if breaking changes)  
-**Next Minor**: v1.6.0 (Phase 2 as opt-in predicates)
-
----
-
-## Measurement & Success Criteria
-
-### Phase Completion
-- ✅ All tests passing (90%+ coverage)
-- ✅ Security audit complete
-- ✅ Documentation current
-- ✅ Performance benchmarks met
-- ✅ Production deployment ready
-
-### Quality Metrics
-- ✅ Zero critical vulnerabilities
-- ✅ ESLint: 0 errors, 0 warnings
-- ✅ TypeScript: strict mode
-- ✅ Tests: deterministic & fast
-
-### Adoption Metrics
-- ✅ Integrations using SDK
-- ✅ Proof types in use
-- ✅ Registry transactions/day
-- ✅ Community feedback
-
----
-
-## Questions & Support
-
-- **Technical**: See [SECURITY.md](SECURITY.md)
-- **Compliance**: See [COMPLIANCE.md](COMPLIANCE.md)
-- **Protocol**: See [docs/spec/protocol-rfc.md](docs/spec/protocol-rfc.md)
-- **Integration**: See [packages/verifier-sdk](packages/verifier-sdk)
-
----
-
-**Next Review**: Q1 2026  
-**Last Updated**: January 13, 2026  
-**Maintainer**: ShieldedID Team
+See `README.md`, `SECURITY.md`, `COMPLIANCE.md`, `audit.md` and `docs/PRODUCTION_READINESS.md` for the current supported security and assurance boundary.
