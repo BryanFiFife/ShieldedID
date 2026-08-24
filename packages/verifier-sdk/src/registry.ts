@@ -52,8 +52,10 @@ export class RegistryClient {
 
   constructor(options: RegistryClientOptions) {
     this.registryUrl = options.registryUrl.replace(/\/$/, "");
-    // Revocation and trust metadata should not remain stale for minutes.
-    this.cacheTtlMs = options.cacheTtlMs ?? 30_000;
+    // Trust and revocation checks default to uncached. Consumers may opt into a
+    // short cache explicitly, but verification correctness does not depend on
+    // stale registry state.
+    this.cacheTtlMs = Math.max(0, options.cacheTtlMs ?? 0);
   }
 
   private checkCircuitBreaker(): void {
@@ -64,8 +66,6 @@ export class RegistryClient {
       this.circuitBreaker.failures = 0;
     }
     if (this.circuitBreaker.failures >= this.circuitBreaker.threshold) {
-      // Identity verification is fail-closed: never serve stale trust data while
-      // the registry is unreachable.
       throw new Error("REGISTRY_CIRCUIT_OPEN");
     }
   }
@@ -80,6 +80,7 @@ export class RegistryClient {
   }
 
   private getFromCache<T>(key: string): T | null {
+    if (this.cacheTtlMs === 0) return null;
     const entry = this.cache.get(key) as CachedEntry<T> | undefined;
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) {
@@ -90,19 +91,23 @@ export class RegistryClient {
   }
 
   private setCache<T>(key: string, value: T) {
+    if (this.cacheTtlMs === 0) return;
     this.cache.set(key, { value, expiresAt: Date.now() + this.cacheTtlMs });
   }
 
   private async getJson<T>(url: string, notFoundCode: string): Promise<T> {
     this.checkCircuitBreaker();
     try {
-      const response = await ensureFetch()(url);
+      const response = await ensureFetch()(url, {
+        method: "GET",
+        headers: { "Cache-Control": "no-cache" },
+        cache: "no-store"
+      });
       if (response.status === 404) {
         this.recordSuccess();
         throw new Error(notFoundCode);
       }
       if (!response.ok) {
-        this.recordFailure();
         throw new Error(`REGISTRY_ERROR:${response.status}`);
       }
       const value = await response.json() as T;
