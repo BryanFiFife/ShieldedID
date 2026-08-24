@@ -29,10 +29,10 @@ export interface VaultPayload {
     expiryDate: string;
   } | null;
   attributes: Array<{ id: string; type: string; value: string; salt: string; commitment: string }>;
-  /** Issuer-signed private witnesses used for accepted ZK identity predicates. */
   numericWitnesses: Partial<Record<NumericAttributeCode, NumericCredentialWitness>>;
   masterSecret: string;
   walletId?: string;
+  signingKeyId?: string;
   signingKeyEncrypted?: string;
   signingKeyIv?: string;
   webauthnCredentialId?: string;
