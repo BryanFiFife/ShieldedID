@@ -14,6 +14,7 @@ import { registerStatusRoutes } from "./routes/status.js";
 import { registerRevokeRoutes } from "./routes/revoke.js";
 import { registerBackupRoutes } from "./routes/backup.js";
 import { registerAdminRoutes } from "./routes/admin.js";
+import { registerIssuerRoutes } from "./routes/issuer.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -24,7 +25,6 @@ export async function buildApp() {
   });
 
   initDb(process.env.DATABASE_URL);
-
   await registerSecurity(app);
   await registerRateLimit(app);
   await app.register(cookie);
@@ -42,36 +42,25 @@ export async function buildApp() {
     wildcard: false
   });
 
-  // SPA fallback for admin routes
-  app.get("/admin/*", async (request, reply) => {
-    return reply.type("text/html").sendFile("admin/index.html");
-  });
+  app.get("/admin/*", async (_request, reply) => reply.type("text/html").sendFile("admin/index.html"));
 
   await app.register(swagger, {
-    openapi: {
-      info: {
-        title: "Shielded ID Registry",
-        version: "1.0.0"
-      }
-    }
+    openapi: { info: { title: "Shielded ID Registry", version: "1.6.0" } }
   });
-
-  await app.register(swaggerUi, {
-    routePrefix: "/docs"
-  });
+  await app.register(swaggerUi, { routePrefix: "/docs" });
 
   await registerWalletRoutes(app);
   await registerStatusRoutes(app);
   await registerRevokeRoutes(app);
   await registerBackupRoutes(app);
+  await registerIssuerRoutes(app);
   await registerAdminRoutes(app);
 
   app.setNotFoundHandler((request, reply) => {
     if (request.url.startsWith("/api") || request.url.startsWith("/v1")) {
-      reply.send({ ok: false, error: "NOT_FOUND", path: request.url });
+      reply.code(404).send({ ok: false, error: "NOT_FOUND", path: request.url });
       return;
     }
-    // Let @fastify/static handle serving HTML files
     reply.code(404).send({ ok: false, error: "NOT_FOUND" });
   });
 
