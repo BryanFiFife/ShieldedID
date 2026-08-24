@@ -4,27 +4,47 @@ const encoder = new TextEncoder();
 
 function getCrypto(): Crypto {
   const cryptoObj = globalThis.crypto ?? (globalThis as { webcrypto?: Crypto }).webcrypto;
-  if (!cryptoObj) {
-    throw new Error("WEBCRYPTO_NOT_AVAILABLE");
-  }
+  if (!cryptoObj) throw new Error("WEBCRYPTO_NOT_AVAILABLE");
   return cryptoObj;
 }
 
 function toBase64(data: Uint8Array): string {
   let binary = "";
-  data.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
+  data.forEach((byte) => { binary += String.fromCharCode(byte); });
   return btoa(binary);
 }
 
 function fromBase64(value: string): Uint8Array {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+/**
+ * Convert WebCrypto's exported JWK to the exact public representation used by
+ * Shielded ID's signed registry protocol. Fields such as `ext`, `key_ops` and
+ * `alg` are runtime/export metadata and must not silently alter a signed
+ * payload when an API validator normalizes it.
+ */
+export function canonicalP256PublicJwk(jwk: JsonWebKey): JsonWebKey {
+  if (
+    jwk.kty !== "EC" ||
+    jwk.crv !== "P-256" ||
+    typeof jwk.x !== "string" || jwk.x.length < 20 ||
+    typeof jwk.y !== "string" || jwk.y.length < 20
+  ) {
+    throw new Error("INVALID_P256_PUBLIC_KEY");
+  }
+  const canonical: JsonWebKey = {
+    kty: "EC",
+    crv: "P-256",
+    x: jwk.x,
+    y: jwk.y
+  };
+  if (jwk.kid) canonical.kid = jwk.kid;
+  if (jwk.use) canonical.use = jwk.use;
+  return canonical;
 }
 
 async function derivePassphraseKey(passphrase: string, salt: Uint8Array) {
@@ -54,7 +74,6 @@ export async function createWebAuthnPasskey(): Promise<{ credentialId: string; p
   const crypto = getCrypto();
   const challenge = new Uint8Array(32);
   crypto.getRandomValues(challenge);
-
   const userId = new Uint8Array(16);
   crypto.getRandomValues(userId);
 
@@ -72,36 +91,30 @@ export async function createWebAuthnPasskey(): Promise<{ credentialId: string; p
         residentKey: "preferred",
         userVerification: "preferred"
       },
-      timeout: 60000,
+      timeout: 60_000,
       attestation: "none"
     }
   })) as PublicKeyCredential | null;
 
-  if (!credential) {
-    throw new Error("PASSKEY_CREATION_FAILED");
-  }
+  if (!credential) throw new Error("PASSKEY_CREATION_FAILED");
 
   const response = credential.response as AuthenticatorAttestationResponse & {
     getPublicKey?: () => ArrayBuffer;
   };
+  if (!response.getPublicKey) throw new Error("PASSKEY_PUBLIC_KEY_UNAVAILABLE");
 
-  if (!response.getPublicKey) {
-    throw new Error("PASSKEY_PUBLIC_KEY_UNAVAILABLE");
-  }
-
-  const publicKeyBuffer = response.getPublicKey();
   const publicKey = await crypto.subtle.importKey(
     "spki",
-    publicKeyBuffer,
+    response.getPublicKey(),
     { name: "ECDSA", namedCurve: "P-256" },
     true,
     ["verify"]
   );
-  const publicKeyJwk = (await crypto.subtle.exportKey("jwk", publicKey)) as JsonWebKey;
+  const exported = await crypto.subtle.exportKey("jwk", publicKey) as JsonWebKey;
 
   return {
     credentialId: toBase64(new Uint8Array(credential.rawId)),
-    publicKeyJwk
+    publicKeyJwk: canonicalP256PublicJwk(exported)
   };
 }
 
@@ -115,19 +128,14 @@ export async function createSigningKey(passphrase: string): Promise<{
     true,
     ["sign", "verify"]
   );
-  const publicKeyJwk = (await crypto.subtle.exportKey("jwk", keyPair.publicKey)) as JsonWebKey;
+  const exportedPublicKey = await crypto.subtle.exportKey("jwk", keyPair.publicKey) as JsonWebKey;
   const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
 
   const salt = generateSalt();
   const iv = new Uint8Array(12);
   crypto.getRandomValues(iv);
   const key = await derivePassphraseKey(passphrase, salt);
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    privateKey
-  );
-
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, privateKey);
   const envelope = {
     salt: toBase64(salt),
     iv: toBase64(iv),
@@ -135,7 +143,7 @@ export async function createSigningKey(passphrase: string): Promise<{
   };
 
   return {
-    publicKeyJwk,
+    publicKeyJwk: canonicalP256PublicJwk(exportedPublicKey),
     encryptedPrivateKey: encoder.encode(JSON.stringify(envelope))
   };
 }
@@ -162,30 +170,22 @@ export async function decryptSigningKey(passphrase: string, encryptedPrivateKey:
   );
 }
 
+/** WebAuthn signs authenticatorData || SHA256(clientDataJSON), not arbitrary proof JSON. */
 export async function signWithPasskey(message: Uint8Array): Promise<Uint8Array> {
   const crypto = getCrypto();
   const challenge = new Uint8Array(await crypto.subtle.digest("SHA-256", message));
   const assertion = (await navigator.credentials.get({
-    publicKey: {
-      challenge,
-      userVerification: "preferred"
-    }
+    publicKey: { challenge, userVerification: "preferred" }
   })) as PublicKeyCredential | null;
-
-  if (!assertion) {
-    throw new Error("PASSKEY_ASSERTION_FAILED");
-  }
-
-  const response = assertion.response as AuthenticatorAssertionResponse;
-  return new Uint8Array(response.signature);
+  if (!assertion) throw new Error("PASSKEY_ASSERTION_FAILED");
+  return new Uint8Array((assertion.response as AuthenticatorAssertionResponse).signature);
 }
 
 export async function signWithSoftwareKey(
   message: Uint8Array,
   decryptedPrivateKey: CryptoKey
 ): Promise<Uint8Array> {
-  const crypto = getCrypto();
-  const signature = await crypto.subtle.sign(
+  const signature = await getCrypto().subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     decryptedPrivateKey,
     message
