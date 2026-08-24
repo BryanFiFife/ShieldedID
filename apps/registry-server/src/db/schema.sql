@@ -16,9 +16,27 @@ CREATE TABLE IF NOT EXISTS wallet_keys (
   webauthn_credential_id TEXT NULL,
   created_at TEXT NOT NULL,
   revoked_at TEXT NULL,
-  -- SECURITY FIX #4B: Persist key expiration (365 days from creation)
   expires_at TEXT NOT NULL DEFAULT (datetime(datetime('now'), '+365 days')),
   FOREIGN KEY (wallet_id) REFERENCES wallets(wallet_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS issuer_keys (
+  issuer_did TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  key_material TEXT NOT NULL CHECK (json_valid(key_material)),
+  algorithm TEXT NOT NULL CHECK (algorithm IN ('ECDSA_P256_SHA256_1.0.0')),
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE','SUSPENDED','REVOKED')),
+  created_at TEXT NOT NULL,
+  revoked_at TEXT NULL,
+  PRIMARY KEY (issuer_did, key_id)
+);
+
+CREATE TABLE IF NOT EXISTS issuer_audit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  issuer_did TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('ISSUER_KEY_REGISTERED','ISSUER_KEYS_REVOKED')),
+  metadata TEXT NOT NULL CHECK (json_valid(metadata)),
+  timestamp TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS revocations (
@@ -83,24 +101,20 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_wallets_status ON wallets(status);
 CREATE INDEX IF NOT EXISTS idx_wallets_created_at ON wallets(created_at);
-
 CREATE INDEX IF NOT EXISTS idx_wallet_keys_wallet_id ON wallet_keys(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_keys_created_at ON wallet_keys(created_at);
 CREATE INDEX IF NOT EXISTS idx_wallet_keys_revoked_at ON wallet_keys(revoked_at);
--- SECURITY FIX #5B: Index for efficient expiration queries
 CREATE INDEX IF NOT EXISTS idx_wallet_keys_expires_at ON wallet_keys(expires_at);
-
+CREATE INDEX IF NOT EXISTS idx_issuer_keys_status ON issuer_keys(status);
+CREATE INDEX IF NOT EXISTS idx_issuer_keys_created_at ON issuer_keys(created_at);
+CREATE INDEX IF NOT EXISTS idx_issuer_audit_timestamp ON issuer_audit_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_revocations_effective_at ON revocations(effective_at);
 CREATE INDEX IF NOT EXISTS idx_revocations_target_id ON revocations(target_id);
-
 CREATE INDEX IF NOT EXISTS idx_backups_wallet_id ON backups(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_backups_created_at ON backups(created_at);
-
 CREATE INDEX IF NOT EXISTS idx_audit_events_wallet_id ON audit_events(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp);
-
 CREATE INDEX IF NOT EXISTS idx_contact_messages_status ON contact_messages(status);
 CREATE INDEX IF NOT EXISTS idx_contact_messages_created_at ON contact_messages(created_at);
-
 CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions(email);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
