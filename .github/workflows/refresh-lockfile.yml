@@ -1,0 +1,26 @@
+name: Refresh pnpm lockfile
+
+on:
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Resolve workspace dependencies
+        run: pnpm install --lockfile-only --no-frozen-lockfile
+      - name: Upload generated root lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: refreshed-pnpm-lock
+          path: pnpm-lock.yaml
+          if-no-files-found: error
