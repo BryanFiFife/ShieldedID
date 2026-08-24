@@ -1,6 +1,6 @@
 {
   "name": "@shielded-id/attester-sdk",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Shielded ID attester SDK for issuer-signed commitment credentials",
   "license": "Apache-2.0",
   "type": "module",
@@ -13,7 +13,9 @@
       "import": "./dist/attester.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --coverage",
