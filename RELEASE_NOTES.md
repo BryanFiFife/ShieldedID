@@ -1,154 +1,61 @@
-# ShieldedID v1.5.0 Release - Complete
+# ShieldedID v1.6.1 Release Notes
 
-## ✅ Release Successfully Pushed to GitHub
+**Release type:** Release-integrity and assurance patch  
+**Date:** 2026-08-24
 
-**Repository**: https://github.com/BryanFiFife/ShieldedID  
-**Release Tag**: v1.5.0  
-**Date**: January 13, 2026
+## Summary
 
----
+ShieldedID v1.6.1 does not replace the cryptographic architecture introduced in v1.6.0. It tightens the release process and removes stale documentation that overstated compliance, audit status and production assurance.
 
-## 📦 What's Included
+The v1.6.x security model remains based on issuer-bound Bulletproof numeric predicates, CSPRNG-backed proving randomness, dedicated wallet proof-signing keys, central issuer/wallet key status checks, minimal disclosure for supported numeric claims, and fail-closed handling of unsupported predicates.
 
-### Essential Documentation (Slimmed Down)
-- ✅ **README.md** - Product overview and architecture
-- ✅ **SECURITY.md** - Security guarantees and cryptographic controls
-- ✅ **CHANGELOG.md** - Version history and release notes
-- ✅ **blueprint.md** - System architecture reference
+## Changes in v1.6.1
 
-### Removed (Verbose Audit Docs)
-- ❌ AUDIT_REMEDIATION_ROUND1-7.md (7 files)
-- ❌ AUDIT*_SUMMARY.md files
-- ❌ audit.md
-- ❌ ADOPTERS.md, ADOPTION_NOTES.md, AGE_ZK_PROOF_DESIGN.md
-- ❌ ARGON2_FIX.md, COMPLETE_ANALYSIS.md, DX-IMPROVEMENTS.md
-- ❌ EXECUTIVE_SUMMARY.md, PRODUCTION_CHECKLIST.md, SLIMMING_GUIDE.md
-- ❌ WALLET_FUNCTIONAL_TEST.md, WALLET_USER_GUIDE.md, DOCS.md
-- ❌ DEPLOYMENT_GUIDE.md, SDK_ADOPTION_GUIDE.md, COMPLIANCE.md
+### Release-integrity hardening
 
----
+- Added an explicit JavaScript dependency advisory gate using `pnpm audit`.
+- Added a RustSec dependency advisory gate using `cargo-audit` for the Rust lockfiles.
+- Added an aggregate CI release gate that depends on the WASM build/adversarial checks, Linux tests, Windows tests, cryptographic truth gate and dependency-audit job.
+- Documented that a release tag must point to the exact `master` commit that passed a fresh post-merge `push` CI run. A successful pull-request run alone is not final release evidence.
 
-## 📊 Version Updates
+### Documentation truth pass
 
-All version numbers updated from 1.4.0 → 1.5.0:
+- Replaced the obsolete v1.5 audit report that claimed "100% ISO 27001 compliance", "114 controls", "zero code quality issues", "enterprise-grade" security and absolute production readiness.
+- Replaced obsolete v1.5 release notes with the current v1.6.1 release record.
+- Retained the existing compliance position that ShieldedID is not ISO/IEC 27001 certified and that repository controls do not establish GDPR, UK GDPR, OWASP, NIST or other formal compliance.
+- Explicitly records the residual correlation risk created by reuse of the persistent issuer-signed commitment. Full anonymous-credential unlinkability is not claimed.
 
-| Package | Version |
-|---------|---------|
-| @shielded-id/root | 1.5.0 |
-| @shielded-id/wallet-pwa | 1.5.0 |
-| shielded-registry-server | 1.5.0 |
-| shielded-verifier-demo | 1.5.0 |
-| @shielded-id/verifier-sdk | 1.5.0 |
-| @shielded-id/attester-sdk | 1.5.0 |
-| @shielded-id/integration-tests | 1.5.0 |
-| shielded-zk-agent | 1.5.0 |
+### Version consistency
 
----
+All JavaScript workspace package versions are updated from 1.6.0 to 1.6.1 for this release-integrity patch.
 
-## 🔧 Key Changes in v1.5.0
+## Security functionality retained from v1.6.0
 
-### Security Hardening
-✅ Enhanced CONTINUITY claim validation with comprehensive type checking  
-✅ Strengthened error message handling for production environments  
-✅ Improved cryptographic validation coverage  
+The following hardened behaviours remain part of the v1.6.x implementation:
 
-### Code Quality
-✅ CONTINUITY claim support extended for both string and boolean values  
-✅ Test coverage improved to near-100% across all components  
-✅ Client-safe error messaging system enhanced  
+- real Bulletproofs/Ristretto255 numeric bound proofs rather than simulated proof bytes;
+- AGE_OVER and KYC_LEVEL proofs bound to issuer-authenticated Pedersen source commitments;
+- no raw age, date of birth, private KYC level or numeric witness in supported proof public inputs;
+- verifier checks for origin/context, nonce, expiry, request/claim consistency, issuer signature, wallet signature, proof relation and key status;
+- issuer and wallet-key revocation paths exercised by the real integration test;
+- CSPRNG-backed proving/blinding entropy;
+- WebAuthn/passkeys kept separate from the dedicated proof-signing key path;
+- unsupported historical predicates rejected rather than accepted through plaintext assertions;
+- reproducible Rust/WASM generation checked by CI.
 
-### Testing & Validation
-✅ 186 comprehensive tests passing (zero regressions)  
-✅ CONTINUITY claim validation edge cases covered  
-✅ Error handling fallback mechanisms verified  
-✅ Real ZK end-to-end tests maintained  
+## Assurance boundary
 
----
+A green ShieldedID CI run is evidence that the configured tests and security gates passed for that exact commit. It is not evidence that no vulnerability exists, and it is not an independent cryptographic audit, penetration test, legal opinion or certification.
 
-## 🚀 Production Ready
+Before high-risk or regulated production deployment, independent cryptographic review, application penetration testing, deployment-specific threat modelling, privacy/legal review and operational security review remain recommended.
 
-ShieldedID v1.3.0 is **production-ready** for:
-- Real-money zero-knowledge identity verification
-- Minimal-disclosure age and KYC proofs
-- Privacy-preserving credential verification
-- Enterprise-grade cryptographic security
-- Regulatory compliance (OWASP, ISO 27001)
+## Release acceptance rule
 
-### Security Posture
-- ✅ Military-grade cryptography (ECDSA P-256, Bulletproofs Ristretto255)
-- ✅ Supply chain integrity (WASM + agent binary verification)
-- ✅ Runtime protection (type safety, circuit breakers)
-- ✅ Audit compliance (immutable logging)
-- ✅ Zero PII disclosure (minimal disclosure design)
+A v1.6.1 release is considered internally verified only when:
 
-### Operational Excellence
-- ✅ Performance monitoring complete
-- ✅ Health checks and readiness probes
-- ✅ Non-blocking async operations
-- ✅ Circuit breaker for external dependencies
-- ✅ Comprehensive error handling
+1. the candidate changes pass the full pull-request CI suite;
+2. the changes are merged to `master` without altering the tested content unexpectedly;
+3. a fresh `push` CI run on the resulting `master` SHA succeeds;
+4. the `v1.6.1` tag points to that exact green `master` SHA.
 
----
-
-## 📖 Documentation Structure
-
-```
-ShieldedID v1.3.0
-├── README.md                    (Start here)
-├── SECURITY.md                  (Security details)
-├── CHANGELOG.md                 (Release history)
-├── blueprint.md                 (Architecture)
-├── LICENSE                      (Apache 2.0)
-├── NOTICE                       (Attribution)
-└── apps/
-    ├── wallet-pwa/              (User wallet)
-    ├── registry-server/         (Key registry)
-    ├── verifier-demo/           (Integration demo)
-    └── zk-agent/                (ZK prover)
-```
-
----
-
-## 🎯 Next Steps
-
-1. **Download/Clone**: `git clone https://github.com/BryanFiFife/ShieldedID.git`
-2. **Checkout Release**: `git checkout v1.3.0`
-3. **Install Dependencies**: `pnpm install`
-4. **Build**: `pnpm build`
-5. **Deploy**: Follow instructions in README.md
-
----
-
-## 📝 Commit Details
-
-**Commit Hash**: 1e02f3c  
-**Commit Message**: "chore: release v1.1.0 - production hardening complete"
-
-**Changes**:
-- 62 files changed
-- 8,281 insertions (+)
-- 5,174 deletions (-)
-- 22 files deleted (verbose documentation)
-- 8 files created (new tests and specs)
-
----
-
-## ✨ Release Highlights
-
-🎉 **Complete Security Audit**: 7 comprehensive audits → 26 critical issues fixed  
-🔐 **Type Safety**: Zero runtime undefined errors  
-🛡️ **Agent Integrity**: SHA-256 binary verification  
-📊 **Metrics**: Complete performance visibility  
-✅ **Production Ready**: 99%+ readiness confirmed  
-
----
-
-## 🤝 Support
-
-- **Documentation**: See README.md and SECURITY.md
-- **Issues**: GitHub Issues (https://github.com/BryanFiFife/ShieldedID/issues)
-- **Security**: See SECURITY.md for responsible disclosure
-
----
-
-**Release Status**: ✅ COMPLETE AND LIVE ON GITHUB
+This rule is intentionally stricter than treating a pre-merge PR result as release evidence.
