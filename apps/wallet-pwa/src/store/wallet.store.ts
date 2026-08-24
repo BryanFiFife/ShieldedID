@@ -9,7 +9,12 @@ import {
   type VaultPayload
 } from "../lib/vault";
 import { saveVaultEnvelope, loadVaultEnvelope, clearVaultEnvelope } from "../lib/vault-storage";
-import { createSigningKey, createWebAuthnPasskey, signWithPasskey } from "../lib/keys";
+import {
+  createSigningKey,
+  createWebAuthnPasskey,
+  decryptSigningKey,
+  signWithSoftwareKey
+} from "../lib/keys";
 import { deriveMasterSecret } from "../lib/pairwise-id";
 import { commitAttribute, createAttribute } from "../lib/commitments";
 import { generateProof, type ProofRequest, type ProofResponse } from "../lib/proof-generator";
@@ -65,6 +70,10 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
+function base64ToBytes(value: string): Uint8Array {
+  return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
+}
+
 function assertWitness(attribute: NumericAttributeCode, witness: NumericCredentialWitness): void {
   if (!Number.isSafeInteger(witness.value) || witness.value < 0) {
     throw new Error(`INVALID_WITNESS_VALUE:${attribute}`);
@@ -99,26 +108,35 @@ async function persistPayload(payload: VaultPayload, passphrase: string): Promis
   await saveVaultEnvelope(ENVELOPE_KEY, envelope);
 }
 
-async function registerWallet(publicKeyJwk: JsonWebKey, credentialId: string) {
+async function registerWallet(
+  publicKeyJwk: JsonWebKey,
+  webauthnCredentialId: string,
+  signingKey: CryptoKey
+): Promise<{ walletId: string; keyId: string }> {
   const registryUrl = import.meta.env.VITE_REGISTRY_URL ?? "";
-  if (!registryUrl) return { walletId: crypto.randomUUID() };
+  if (!registryUrl) {
+    return { walletId: `local-${crypto.randomUUID()}`, keyId: `local-key-${crypto.randomUUID()}` };
+  }
 
   const payload = {
     action: "WALLET_REGISTER",
     publicKeys: { signing: publicKeyJwk },
-    webauthnCredentialId: credentialId,
+    webauthnCredentialId,
     suiteVersion: "2.0"
   };
-  const signatureBytes = await signWithPasskey(new TextEncoder().encode(stableStringify(payload)));
+  const signatureBytes = await signWithSoftwareKey(
+    new TextEncoder().encode(stableStringify(payload)),
+    signingKey
+  );
   const response = await fetch(`${registryUrl}/v1/wallet/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...payload, signature: bytesToBase64(signatureBytes) })
   });
   if (!response.ok) throw new Error(`REGISTRY_REGISTER_FAILED:${response.status}`);
-  const result = await response.json() as { walletId?: string };
-  if (!result.walletId) throw new Error("REGISTRY_REGISTER_MALFORMED_RESPONSE");
-  return { walletId: result.walletId };
+  const result = await response.json() as { walletId?: string; keyId?: string };
+  if (!result.walletId || !result.keyId) throw new Error("REGISTRY_REGISTER_MALFORMED_RESPONSE");
+  return { walletId: result.walletId, keyId: result.keyId };
 }
 
 export const useWalletStore = create<WalletStore>((set, get) => ({
@@ -167,9 +185,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     const key = get().decoyModeActive ? DECOY_KEY : ENVELOPE_KEY;
     const envelope = await loadVaultEnvelope(key);
     if (!envelope) throw new Error("VAULT_NOT_FOUND");
-    const aad = envelope.aad
-      ? Uint8Array.from(atob(envelope.aad), (c) => c.charCodeAt(0))
-      : undefined;
+    const aad = envelope.aad ? base64ToBytes(envelope.aad) : undefined;
     const payload = await decryptVault(envelope, passphrase, aad);
     set({
       vaultLocked: false,
@@ -181,40 +197,42 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
   enrollWallet: async (passphrase, document) => {
     const masterSecret = deriveMasterSecret();
-    const signingKey = await createSigningKey(passphrase);
+    const signingKeyEnvelope = await createSigningKey(passphrase);
+    const signingPrivateKey = await decryptSigningKey(passphrase, signingKeyEnvelope.encryptedPrivateKey);
     const passkey = await createWebAuthnPasskey();
 
     const attributes: VaultPayload["attributes"] = [];
     if (document) {
       const given = createAttribute("GIVEN_NAME", document.givenName);
       const family = createAttribute("FAMILY_NAME", document.familyName);
-      const givenCommitment = await commitAttribute(given.normalizedValue, given.salt);
-      const familyCommitment = await commitAttribute(family.normalizedValue, family.salt);
       attributes.push({
         id: given.id,
         type: given.type,
         value: given.normalizedValue,
         salt: btoa(String.fromCharCode(...given.salt)),
-        commitment: givenCommitment
+        commitment: await commitAttribute(given.normalizedValue, given.salt)
       });
       attributes.push({
         id: family.id,
         type: family.type,
         value: family.normalizedValue,
         salt: btoa(String.fromCharCode(...family.salt)),
-        commitment: familyCommitment
+        commitment: await commitAttribute(family.normalizedValue, family.salt)
       });
     }
 
-    // Registration happens before persistence so the encrypted vault contains
-    // the actual registry wallet ID and survives reload/unlock.
-    const registry = await registerWallet(passkey.publicKeyJwk, passkey.credentialId);
+    const registry = await registerWallet(
+      signingKeyEnvelope.publicKeyJwk,
+      passkey.credentialId,
+      signingPrivateKey
+    );
     const payload: VaultPayload = {
       ...createEmptyVault(),
       profile: document,
       masterSecret: btoa(String.fromCharCode(...masterSecret)),
       walletId: registry.walletId,
-      signingKeyEncrypted: btoa(String.fromCharCode(...signingKey.encryptedPrivateKey)),
+      signingKeyId: registry.keyId,
+      signingKeyEncrypted: btoa(String.fromCharCode(...signingKeyEnvelope.encryptedPrivateKey)),
       webauthnCredentialId: passkey.credentialId,
       attributes,
       numericWitnesses: {},
@@ -249,10 +267,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
     const updatedPayload: VaultPayload = {
       ...vaultPayload,
-      numericWitnesses: {
-        ...vaultPayload.numericWitnesses,
-        ...validated
-      }
+      numericWitnesses: { ...vaultPayload.numericWitnesses, ...validated }
     };
     await persistPayload(updatedPayload, passphrase);
     set({ vaultPayload: updatedPayload });
@@ -260,9 +275,13 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
   generateProof: async (request, passphrase) => {
     const { vaultPayload, walletId } = get();
-    if (!vaultPayload || !walletId) throw new Error("WALLET_NOT_READY");
+    if (!vaultPayload || !walletId || !vaultPayload.signingKeyId) throw new Error("WALLET_NOT_READY");
 
-    const proof = await generateProof(request, vaultPayload, { walletId, passphrase });
+    const proof = await generateProof(request, vaultPayload, {
+      walletId,
+      keyId: vaultPayload.signingKeyId,
+      passphrase
+    });
     if (passphrase) {
       const receipt = {
         id: crypto.randomUUID(),
