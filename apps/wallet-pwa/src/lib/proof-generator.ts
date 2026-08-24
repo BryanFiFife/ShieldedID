@@ -1,58 +1,12 @@
 import { generatePairwiseSubjectId } from "./pairwise-id";
 import { decryptSigningKey, signWithPasskey, signWithSoftwareKey } from "./keys";
-import type { VaultPayload } from "./vault";
-import {
-  prove_ge
-} from "@shielded-id/age-zk";
-
-// Stub implementations for functions not yet available in age-zk
-async function prove_age_range(age: bigint, minAge: bigint, maxAge: bigint, context: string) {
-  throw new Error("prove_age_range not yet implemented in age-zk package");
-}
-
-async function prove_birth_year(year: bigint, minYear: bigint, context: string) {
-  throw new Error("prove_birth_year not yet implemented in age-zk package");
-}
-
-async function prove_string_equality(value: string, expected: string, context: string) {
-  throw new Error("prove_string_equality not yet implemented in age-zk package");
-}
-
-async function prove_membership_in_list(value: string, list: string[], context: string) {
-  throw new Error("prove_membership_in_list not yet implemented in age-zk package");
-}
-
-async function prove_not_in_list(value: string, list: string[], context: string) {
-  throw new Error("prove_not_in_list not yet implemented in age-zk package");
-}
-
-async function prove_string_prefix(value: string, prefix: string, context: string) {
-  throw new Error("prove_string_prefix not yet implemented in age-zk package");
-}
-import { zkAgent } from "./zk-agent";
-import type { ClaimType, PredicateOperator } from "@shielded-id/verifier-sdk";
-
-// SECURITY FIX #4: Mutex for thread-safe ZK proof generation
-class Mutex {
-  private locked = false;
-  private queue: Array<() => void> = [];
-
-  async acquire<T>(fn: () => Promise<T>): Promise<T> {
-    while (this.locked) {
-      await new Promise(resolve => this.queue.push(resolve));
-    }
-    this.locked = true;
-    try {
-      return await fn();
-    } finally {
-      this.locked = false;
-      const next = this.queue.shift();
-      if (next) next();
-    }
-  }
-}
+import type { NumericCommitmentAttestation, VaultPayload } from "./vault";
+import { prove_ge_attested, prove_le_attested } from "@shielded-id/age-zk";
 
 const encoder = new TextEncoder();
+
+type SupportedClaimType = "AGE_OVER" | "KYC_LEVEL" | "CONTINUITY";
+type PredicateOperator = "GE" | "LE";
 
 export interface ProofRequest {
   requestId: string;
@@ -60,18 +14,10 @@ export interface ProofRequest {
   verifierOrigin: string;
   expiresAt?: string;
   requestedClaims: Array<{
-    type: ClaimType;
+    type: SupportedClaimType | string;
     operator?: PredicateOperator;
     threshold?: number;
     minLevel?: number;
-    minValue?: number;
-    maxValue?: number;
-    expectedValue?: string | number;
-    expectedCountry?: string;
-    expectedState?: string;
-    requiredEndorsement?: string;
-    forbiddenRestriction?: string;
-    prefixLength?: number;
   }>;
 }
 
@@ -82,495 +28,161 @@ export interface ProofResponse {
   keyId?: string;
   pairwiseSubjectId: string;
   claims: Array<{
-    type: string;
-    value: boolean | number | string;
+    type: SupportedClaimType;
+    value: boolean | string;
     operator?: PredicateOperator;
-    issuer?: { did: string; signature?: string };
+    issuer?: { did: string; keyId: string; signature: string };
     expiresAt?: string;
+    evidence?: { commitmentAttestation: NumericCommitmentAttestation };
   }>;
-  suite: "ECDSA_P256_SHA256_1.0.0" | "BULLETPROOFS_RISTRETTO_V1" | "AGE_ZK_BULLETPROOFS_V1" | "KYC_ZK_BULLETPROOFS_V1";
+  suite: "ECDSA_P256_SHA256_1.0.0" | "BULLETPROOFS_RISTRETTO_BOUND_V2";
   signature: string;
-  // Multiple ZK proofs indexed by claim index
-  zkProofs?: {
-    [claimIndex: number]: {
-      commitment: string;
-      bulletproof: string;
-      publicInputs: string;
-      claimType: ClaimType;
-      operator: PredicateOperator;
-    };
-  };
+  zkProofs?: Record<number, {
+    commitment: string;
+    bulletproof: string;
+    publicInputs: string;
+    claimType: "AGE_OVER" | "KYC_LEVEL";
+    operator: PredicateOperator;
+  }>;
 }
 
 function stableStringify(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
       .sort(([a], [b]) => a.localeCompare(b));
-    const body = entries.map(([k, v]) => `"${k}":${stableStringify(v)}`).join(",");
-    return `{${body}}`;
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
   }
-  if (typeof value === "string") {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("NON_FINITE_NUMBER");
     return JSON.stringify(value);
   }
-  return String(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return JSON.stringify(value);
 }
 
 function base64FromBytes(bytes: Uint8Array): string {
   let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
   return btoa(binary);
 }
 
 function bytesFromBase64(value: string): Uint8Array {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
 
-function computeAgeOver18(dateOfBirth: string): boolean {
-  const dob = Date.parse(dateOfBirth);
-  if (Number.isNaN(dob)) return false;
-  const diff = Date.now() - dob;
-  const years = diff / (1000 * 60 * 60 * 24 * 365.25);
-  return years >= 18;
+function cutoffYyyymmdd(age: number, now = new Date()): number {
+  if (!Number.isInteger(age) || age < 0 || age > 150) throw new Error("INVALID_AGE_THRESHOLD");
+  const year = now.getUTCFullYear() - age;
+  const month = now.getUTCMonth();
+  const day = now.getUTCDate();
+  const maxDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(day, maxDay);
+  return year * 10000 + (month + 1) * 100 + clampedDay;
 }
 
-function computeAge(dateOfBirth: string): number {
-  const dob = Date.parse(dateOfBirth);
-  if (Number.isNaN(dob)) return 0;
-  const diff = Date.now() - dob;
-  const years = diff / (1000 * 60 * 60 * 24 * 365.25);
-  return Math.floor(years);
+function requireCurrentAttestation(attestation: NumericCommitmentAttestation, expectedAttribute: string) {
+  if (attestation.version !== "SID-COMMITMENT-1") throw new Error("UNSUPPORTED_ATTESTATION_VERSION");
+  if (attestation.attribute !== expectedAttribute) throw new Error("ATTESTATION_ATTRIBUTE_MISMATCH");
+  if (!attestation.signature || !attestation.commitment || !attestation.issuerDid || !attestation.keyId) {
+    throw new Error("MALFORMED_ATTESTATION");
+  }
+  const expiry = Date.parse(attestation.expiresAt);
+  if (!Number.isFinite(expiry) || expiry <= Date.now()) throw new Error("ATTESTATION_EXPIRED");
 }
-
-// SECURITY FIX #4: Global mutex for ZK proof generation
-const zkMutex = new Mutex();
-
-const EU_COUNTRIES = "AT,BE,BG,HR,CY,CZ,DK,EE,FI,FR,DE,GR,HU,IE,IT,LV,LT,LU,MT,NL,PL,PT,RO,SK,SI,ES,SE";
 
 export async function generateProof(
   request: ProofRequest,
   vault: VaultPayload,
   options: { walletId: string; keyId?: string; passphrase?: string }
 ): Promise<ProofResponse> {
-  if (!vault.masterSecret) {
-    throw new Error("MASTER_SECRET_MISSING");
-  }
+  if (!vault.masterSecret) throw new Error("MASTER_SECRET_MISSING");
+  if (!request.requestId || !request.nonce || !request.verifierOrigin) throw new Error("INVALID_PROOF_REQUEST");
+  if (request.expiresAt && Date.parse(request.expiresAt) <= Date.now()) throw new Error("PROOF_REQUEST_EXPIRED");
 
   const pairwiseSubjectId = await generatePairwiseSubjectId(
     bytesFromBase64(vault.masterSecret),
     request.verifierOrigin
   );
-
+  const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt ?? ""}`;
   const claims: ProofResponse["claims"] = [];
-  const zkProofs: Record<number, any> = {};
-  const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
+  const zkProofs: NonNullable<ProofResponse["zkProofs"]> = {};
 
-  let claimIndex = 0;
-  for (const requestClaim of request.requestedClaims) {
-    let claimValue: boolean | number | string = false;
-    let zkProof: any = null;
+  for (let claimIndex = 0; claimIndex < request.requestedClaims.length; claimIndex += 1) {
+    const requested = request.requestedClaims[claimIndex];
 
-    try {
-      switch (requestClaim.type) {
-        // ======== AGE PROOFS ========
-        case "AGE_OVER": {
-          const age = vault.profile?.dateOfBirth ? computeAge(vault.profile.dateOfBirth) : 0;
-          const threshold = requestClaim.threshold || 18;
-          claimValue = age >= threshold;
-          
-          if (age >= threshold) {
-            zkProof = await zkMutex.acquire(async () => {
-              const agentAvailable = await zkAgent.isAgentAvailable();
-              if (agentAvailable) {
-                return await zkAgent.generateAgeProof(age, request.verifierOrigin, request.nonce, request.expiresAt || "");
-              } else {
-                return await prove_ge(age, threshold, context);
-              }
-            });
-          }
-          break;
-        }
-
-        case "AGE_RANGE": {
-          const age = vault.profile?.dateOfBirth ? computeAge(vault.profile.dateOfBirth) : 0;
-          const minAge = requestClaim.minValue || 18;
-          const maxAge = requestClaim.maxValue || 65;
-          claimValue = age >= minAge && age <= maxAge;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_age_range(age, minAge, maxAge, context);
-            });
-          }
-          break;
-        }
-
-        case "AGE_EXACT": {
-          const age = vault.profile?.dateOfBirth ? computeAge(vault.profile.dateOfBirth) : 0;
-          const expectedAge = requestClaim.expectedValue as number || 21;
-          claimValue = age === expectedAge;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              // For equality, prove (age - expected) == 0 via range proof
-              return await prove_ge(age === expectedAge ? 1 : 0, 1, context);
-            });
-          }
-          break;
-        }
-
-        case "BORN_AFTER": {
-          const year = vault.profile?.issuedDate ? new Date(vault.profile.issuedDate).getFullYear() : 0;
-          const minYear = requestClaim.expectedValue as number || 1960;
-          claimValue = year >= minYear;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_birth_year(year, minYear, context);
-            });
-          }
-          break;
-        }
-
-        // ======== LOCATION PROOFS ========
-        case "COUNTRY": {
-          const country = vault.profile ? "US" : ""; // Placeholder from vault
-          const expectedCountry = requestClaim.expectedCountry || "US";
-          claimValue = country === expectedCountry;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(country, expectedCountry, context);
-            });
-          }
-          break;
-        }
-
-        case "EU_RESIDENT": {
-          const country = vault.profile ? "DE" : ""; // Placeholder from vault
-          claimValue = EU_COUNTRIES.split(',').includes(country);
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_membership_in_list(country, EU_COUNTRIES, context);
-            });
-          }
-          break;
-        }
-
-        case "STATE_OR_PROVINCE": {
-          const state = vault.profile ? "California" : ""; // Placeholder from vault
-          const expectedState = requestClaim.expectedState || "California";
-          claimValue = state === expectedState;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(state, expectedState, context);
-            });
-          }
-          break;
-        }
-
-        case "POSTAL_CODE_PREFIX": {
-          const postal = vault.profile ? "90210" : ""; // Placeholder from vault
-          const prefix = requestClaim.expectedValue as string || "902";
-          claimValue = postal.startsWith(prefix);
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_prefix(postal, prefix, context);
-            });
-          }
-          break;
-        }
-
-        case "REGION": {
-          const region = vault.profile ? "US-CA" : ""; // Placeholder from vault
-          const expectedRegion = requestClaim.expectedValue as string || "US-CA";
-          claimValue = region === expectedRegion;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(region, expectedRegion, context);
-            });
-          }
-          break;
-        }
-
-        // ======== KYC PROOFS ========
-        case "KYC_LEVEL": {
-          const level = vault.kycLevel || 0;
-          const minLevel = requestClaim.minLevel || 1;
-          claimValue = level >= minLevel;
-          
-          if (level >= minLevel) {
-            zkProof = await zkMutex.acquire(async () => {
-              const agentAvailable = await zkAgent.isAgentAvailable();
-              if (agentAvailable) {
-                return await zkAgent.generateAssuranceProof(level, minLevel, request.verifierOrigin, request.nonce, request.expiresAt || "");
-              } else {
-                return await prove_ge(level, minLevel, context);
-              }
-            });
-          }
-          break;
-        }
-
-        case "KYC_VERIFIED": {
-          const status = vault.attributes?.find(a => a.type === "kycStatus")?.value || "pending";
-          claimValue = status === "verified";
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(status, "verified", context);
-            });
-          }
-          break;
-        }
-
-        case "AML_CLEAR": {
-          const status = vault.attributes?.find(a => a.type === "amlStatus")?.value || "unknown";
-          claimValue = status === "clear";
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(status, "clear", context);
-            });
-          }
-          break;
-        }
-
-        case "SANCTIONS_CLEAR": {
-          const status = vault.attributes?.find(a => a.type === "sanctionsCheck")?.value || "unknown";
-          claimValue = status === "clear";
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(status, "clear", context);
-            });
-          }
-          break;
-        }
-
-        case "DOCUMENT_TYPE": {
-          const docType = vault.profile?.documentType || "passport";
-          const expectedType = requestClaim.expectedValue as string || "passport";
-          claimValue = docType === expectedType;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(docType, expectedType, context);
-            });
-          }
-          break;
-        }
-
-        // ======== DRIVING LICENSE PROOFS ========
-        case "LICENSE_CLASS": {
-          const licenseClass = vault.attributes?.find(a => a.type === "licenseClass")?.value || "0";
-          const licenseNum = parseInt(licenseClass) || 0;
-          const minClass = requestClaim.threshold || 2;
-          claimValue = licenseNum >= minClass;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_ge(licenseNum, minClass, context);
-            });
-          }
-          break;
-        }
-
-        case "VEHICLE_CATEGORY": {
-          const category = vault.attributes?.find(a => a.type === "vehicleCategory")?.value || "car";
-          const expectedCategory = requestClaim.expectedValue as string || "car";
-          claimValue = category === expectedCategory;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(category, expectedCategory, context);
-            });
-          }
-          break;
-        }
-
-        case "ENDORSEMENT": {
-          const endorsements = vault.attributes?.find(a => a.type === "endorsements")?.value || "";
-          const required = requestClaim.requiredEndorsement || "towing";
-          claimValue = endorsements.includes(required);
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_membership_in_list(required, endorsements, context);
-            });
-          }
-          break;
-        }
-
-        case "RESTRICTION": {
-          const restrictions = vault.attributes?.find(a => a.type === "restrictions")?.value || "";
-          const forbidden = requestClaim.forbiddenRestriction || "corrective_lenses";
-          claimValue = !restrictions.includes(forbidden);
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_not_in_list(forbidden, restrictions, context);
-            });
-          }
-          break;
-        }
-
-        case "LICENSE_VALID": {
-          const expiryStr = vault.profile?.expiryDate;
-          const expiry = expiryStr ? new Date(expiryStr).getTime() : 0;
-          claimValue = expiry > Date.now();
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_ge(Math.floor(expiry / 1000), Math.floor(Date.now() / 1000), context);
-            });
-          }
-          break;
-        }
-
-        // ======== DOCUMENT & CREDENTIAL PROOFS ========
-        case "DOCUMENT_VALID": {
-          const expiryStr = vault.profile?.expiryDate;
-          const expiry = expiryStr ? new Date(expiryStr).getTime() : 0;
-          claimValue = expiry > Date.now();
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_ge(Math.floor(expiry / 1000), Math.floor(Date.now() / 1000), context);
-            });
-          }
-          break;
-        }
-
-        case "DOCUMENT_TYPE_MATCH": {
-          const docType = vault.profile?.documentType || "passport";
-          const expectedType = requestClaim.expectedValue as string || "passport";
-          claimValue = docType === expectedType;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(docType, expectedType, context);
-            });
-          }
-          break;
-        }
-
-        case "ISSUER_COUNTRY": {
-          const issuer = vault.profile?.issuer || "US";
-          const expectedIssuer = requestClaim.issuerCountry || "US";
-          claimValue = issuer === expectedIssuer;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(issuer, expectedIssuer, context);
-            });
-          }
-          break;
-        }
-
-        case "DOCUMENT_AGE": {
-          const issuedStr = vault.profile?.issuedDate;
-          const issued = issuedStr ? new Date(issuedStr).getTime() : 0;
-          const minAge = requestClaim.minDocumentAge || 0;
-          claimValue = issued >= minAge;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_ge(Math.floor(issued / 1000), Math.floor(minAge / 1000), context);
-            });
-          }
-          break;
-        }
-
-        case "CREDENTIAL_VALID": {
-          const credExpiry = vault.attributes?.find(a => a.type === "credentialExpiry")?.value || "0";
-          const expiry = parseInt(credExpiry) || 0;
-          claimValue = expiry > Date.now() / 1000;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_ge(expiry, Math.floor(Date.now() / 1000), context);
-            });
-          }
-          break;
-        }
-
-        case "CREDENTIAL_ACTIVE": {
-          const status = vault.attributes?.find(a => a.type === "credentialStatus")?.value || "inactive";
-          claimValue = status === "active";
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_string_equality(status, "active", context);
-            });
-          }
-          break;
-        }
-
-        case "CREDENTIAL_LEVEL": {
-          const level = vault.attributes?.find(a => a.type === "credentialLevel")?.value || "0";
-          const levelNum = parseInt(level) || 0;
-          const minLevel = requestClaim.minLevel || 1;
-          claimValue = levelNum >= minLevel;
-          
-          if (claimValue) {
-            zkProof = await zkMutex.acquire(async () => {
-              return await prove_ge(levelNum, minLevel, context);
-            });
-          }
-          break;
-        }
-
-        case "CONTINUITY": {
-          claimValue = pairwiseSubjectId;
-          break;
-        }
-
-        default: {
-          claimValue = false;
-        }
-      }
-    } catch (err) {
-      console.warn(`[Proof] ZK proof generation failed for ${requestClaim.type}:`, err);
-      // Fall back to non-ZK claim
+    if (requested.type === "CONTINUITY") {
+      claims.push({ type: "CONTINUITY", value: pairwiseSubjectId });
+      continue;
     }
 
-    // Add claim to response
-    claims.push({
-      type: requestClaim.type,
-      value: claimValue,
-      operator: requestClaim.operator || "GE"
-    });
+    if (requested.type === "AGE_OVER") {
+      const witness = vault.numericWitnesses.DOB_YYYYMMDD;
+      if (!witness) throw new Error("ISSUER_ATTESTATION_REQUIRED:AGE_OVER");
+      requireCurrentAttestation(witness.attestation, "DOB_YYYYMMDD");
+      const threshold = requested.threshold ?? 18;
+      const cutoff = cutoffYyyymmdd(threshold);
+      const proof = await prove_le_attested(witness.value, cutoff, context, witness.blinding);
 
-    // Store ZK proof if generated
-    if (zkProof) {
+      claims.push({
+        type: "AGE_OVER",
+        value: true,
+        operator: "LE",
+        issuer: {
+          did: witness.attestation.issuerDid,
+          keyId: witness.attestation.keyId,
+          signature: witness.attestation.signature
+        },
+        expiresAt: witness.attestation.expiresAt,
+        evidence: { commitmentAttestation: witness.attestation }
+      });
       zkProofs[claimIndex] = {
-        commitment: base64FromBytes(new Uint8Array(zkProof.commitment)),
-        bulletproof: base64FromBytes(new Uint8Array(zkProof.proof)),
-        publicInputs: base64FromBytes(new Uint8Array(zkProof.public_inputs)),
-        claimType: requestClaim.type,
-        operator: requestClaim.operator || "GE"
+        commitment: base64FromBytes(proof.commitment),
+        bulletproof: base64FromBytes(proof.proof),
+        publicInputs: base64FromBytes(proof.public_inputs),
+        claimType: "AGE_OVER",
+        operator: "LE"
       };
+      continue;
     }
 
-    claimIndex++;
+    if (requested.type === "KYC_LEVEL") {
+      const witness = vault.numericWitnesses.KYC_LEVEL;
+      if (!witness) throw new Error("ISSUER_ATTESTATION_REQUIRED:KYC_LEVEL");
+      requireCurrentAttestation(witness.attestation, "KYC_LEVEL");
+      const minLevel = requested.minLevel ?? requested.threshold ?? 1;
+      if (!Number.isInteger(minLevel) || minLevel < 0 || minLevel > 5) throw new Error("INVALID_KYC_THRESHOLD");
+      const proof = await prove_ge_attested(witness.value, minLevel, context, witness.blinding);
+
+      claims.push({
+        type: "KYC_LEVEL",
+        value: true,
+        operator: "GE",
+        issuer: {
+          did: witness.attestation.issuerDid,
+          keyId: witness.attestation.keyId,
+          signature: witness.attestation.signature
+        },
+        expiresAt: witness.attestation.expiresAt,
+        evidence: { commitmentAttestation: witness.attestation }
+      });
+      zkProofs[claimIndex] = {
+        commitment: base64FromBytes(proof.commitment),
+        bulletproof: base64FromBytes(proof.proof),
+        publicInputs: base64FromBytes(proof.public_inputs),
+        claimType: "KYC_LEVEL",
+        operator: "GE"
+      };
+      continue;
+    }
+
+    throw new Error(`UNSUPPORTED_CLAIM_TYPE:${requested.type}`);
   }
 
   const response: ProofResponse = {
@@ -580,7 +192,7 @@ export async function generateProof(
     keyId: options.keyId,
     pairwiseSubjectId,
     claims,
-    suite: Object.keys(zkProofs).length > 0 ? "BULLETPROOFS_RISTRETTO_V1" : "ECDSA_P256_SHA256_1.0.0",
+    suite: Object.keys(zkProofs).length > 0 ? "BULLETPROOFS_RISTRETTO_BOUND_V2" : "ECDSA_P256_SHA256_1.0.0",
     signature: "",
     zkProofs: Object.keys(zkProofs).length > 0 ? zkProofs : undefined
   };
@@ -589,31 +201,20 @@ export async function generateProof(
   delete payload.signature;
   const message = encoder.encode(stableStringify(payload));
 
-  // Try WebAuthn first
   if (vault.webauthnCredentialId) {
     try {
-      console.debug("[Proof] Signing with WebAuthn passkey");
       const signature = await signWithPasskey(message);
       response.signature = base64FromBytes(signature);
       return response;
     } catch (err) {
-      console.warn("[Proof] WebAuthn signing failed, falling back to software key:", err);
+      console.warn("[Proof] WebAuthn signing unavailable; trying encrypted software key", err);
     }
   }
 
-  // Fallback to software ECDSA key
-  if (!vault.signingKeyEncrypted || !options.passphrase) {
-    throw new Error("SIGNING_KEY_UNAVAILABLE");
-  }
-
-  try {
-    console.debug("[Proof] Signing with software ECDSA key");
-    const privateKey = await decryptSigningKey(options.passphrase, bytesFromBase64(vault.signingKeyEncrypted));
-    const signature = await signWithSoftwareKey(message, privateKey);
-    response.signature = base64FromBytes(signature);
-    return response;
-  } catch (err) {
-    console.error("[Proof] All signing attempts failed:", err);
-    throw new Error("PROOF_SIGNING_FAILED");
-  }
+  if (!vault.signingKeyEncrypted || !options.passphrase) throw new Error("SIGNING_KEY_UNAVAILABLE");
+  const privateKey = await decryptSigningKey(options.passphrase, bytesFromBase64(vault.signingKeyEncrypted));
+  response.signature = base64FromBytes(await signWithSoftwareKey(message, privateKey));
+  return response;
 }
+
+export { cutoffYyyymmdd, stableStringify };
