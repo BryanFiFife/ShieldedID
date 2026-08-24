@@ -15,31 +15,19 @@ import {
   verifyWalletSignature
 } from "../middleware/auth.js";
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-// SECURITY FIX #5: Key lifecycle management constants
-const MAX_KEY_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000; // 1 year
-const RECOMMENDED_ROTATION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
-
-function getKeyExpiresAt(): string {
-  return new Date(Date.now() + MAX_KEY_LIFETIME_MS).toISOString();
-}
-
-function getRotationReminderAt(): string {
-  return new Date(Date.now() + RECOMMENDED_ROTATION_MS).toISOString();
-}
+function nowIso() { return new Date().toISOString(); }
+const MAX_KEY_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
+const RECOMMENDED_ROTATION_MS = 90 * 24 * 60 * 60 * 1000;
+function getKeyExpiresAt(): string { return new Date(Date.now() + MAX_KEY_LIFETIME_MS).toISOString(); }
+function getRotationReminderAt(): string { return new Date(Date.now() + RECOMMENDED_ROTATION_MS).toISOString(); }
 
 export async function registerWalletRoutes(app: FastifyInstance) {
   app.post(
     "/v1/wallet/register",
     {
-      config: {
-        rateLimit: registrationRateLimit
-      },
+      config: { rateLimit: registrationRateLimit },
       schema: {
-        description: "Register a new wallet with a signing key",
+        description: "Register a new wallet with a proof-signing key",
         tags: ["wallet"],
         body: {
           type: "object",
@@ -74,8 +62,10 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         response: {
           201: {
             type: "object",
+            required: ["walletId", "keyId", "statusUrl", "createdAt", "status"],
             properties: {
               walletId: { type: "string" },
+              keyId: { type: "string" },
               statusUrl: { type: "string" },
               createdAt: { type: "string" },
               status: { type: "string" }
@@ -88,21 +78,16 @@ export async function registerWalletRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { publicKeys, webauthnCredentialId, suiteVersion, signature } =
         request.body as typeof registerWalletSchema._type;
+      const payload = { action: "WALLET_REGISTER", publicKeys, webauthnCredentialId, suiteVersion };
 
-      const payload = {
-        action: "WALLET_REGISTER",
-        publicKeys,
-        webauthnCredentialId,
-        suiteVersion
-      };
-
+      // Registration is proof-of-possession of the exact P-256 key that the
+      // verifier will later use for proof-response signatures.
       await verifyRegisterSignature(publicKeys.signing, payload, signature);
 
       const db = getDb();
       const walletId = randomUUID();
       const keyId = randomUUID();
       const createdAt = nowIso();
-
       const insertWallet = db.prepare(
         "INSERT INTO wallets (wallet_id, created_at, suite_version, status) VALUES (?, ?, ?, ?)"
       );
@@ -112,40 +97,24 @@ export async function registerWalletRoutes(app: FastifyInstance) {
       const insertAudit = db.prepare(
         "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
       );
-
       const signatureHash = await assertNotReplayed(null, payload, signature);
-
-      // SECURITY FIX #5: Log key expiration details in audit metadata
       const expiresAt = getKeyExpiresAt();
       const rotationReminderAt = getRotationReminderAt();
 
-      const tx = db.transaction(() => {
+      db.transaction(() => {
         insertWallet.run(walletId, createdAt, suiteVersion, "ACTIVE");
-        insertKey.run(
-          keyId,
-          walletId,
-          "SIGNING",
-          JSON.stringify(publicKeys.signing),
-          webauthnCredentialId,
-          createdAt
-        );
+        insertKey.run(keyId, walletId, "SIGNING", JSON.stringify(publicKeys.signing), webauthnCredentialId, createdAt);
         insertAudit.run(
           "WALLET_REGISTERED",
           walletId,
-          JSON.stringify({ 
-            signature_hash: signatureHash, 
-            key_id: keyId,
-            expires_at: expiresAt,
-            rotation_reminder_at: rotationReminderAt
-          }),
+          JSON.stringify({ signature_hash: signatureHash, key_id: keyId, expires_at: expiresAt, rotation_reminder_at: rotationReminderAt }),
           createdAt
         );
-      });
-
-      tx();
+      })();
 
       reply.code(201).send({
         walletId,
+        keyId,
         statusUrl: `/v1/status/${walletId}`,
         createdAt,
         status: "ACTIVE"
@@ -160,8 +129,7 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         rateLimit: {
           max: 5,
           timeWindow: "1 minute",
-          keyGenerator: (request) =>
-            (request.params as { walletId: string }).walletId ?? "unknown"
+          keyGenerator: (request) => (request.params as { walletId: string }).walletId ?? "unknown"
         }
       },
       schema: {
@@ -170,9 +138,7 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         params: {
           type: "object",
           required: ["walletId"],
-          properties: {
-            walletId: { type: "string" }
-          }
+          properties: { walletId: { type: "string" } }
         },
         body: {
           type: "object",
@@ -216,18 +182,10 @@ export async function registerWalletRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { walletId } = request.params as { walletId: string };
       const body = request.body as typeof addKeySchema._type;
-
       const db = getDb();
-      const wallet = db
-        .prepare("SELECT status FROM wallets WHERE wallet_id = ?")
-        .get(walletId) as { status: string } | undefined;
-
-      if (!wallet) {
-        throw new Error("WALLET_NOT_FOUND");
-      }
-      if (wallet.status === "REVOKED") {
-        throw new Error("WALLET_REVOKED");
-      }
+      const wallet = db.prepare("SELECT status FROM wallets WHERE wallet_id = ?").get(walletId) as { status: string } | undefined;
+      if (!wallet) throw new Error("WALLET_NOT_FOUND");
+      if (wallet.status === "REVOKED") throw new Error("WALLET_REVOKED");
 
       const payload = {
         action: "WALLET_ADD_KEY",
@@ -237,27 +195,22 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         suiteVersion: body.suiteVersion,
         replaceKeyId: body.replaceKeyId || null
       };
-
       await verifyWalletSignature(walletId, payload, body.signature);
       const signatureHash = await assertNotReplayed(walletId, payload, body.signature);
 
       const keyId = randomUUID();
       const createdAt = nowIso();
-      // SECURITY FIX #5: Log key expiration details in audit metadata
       const expiresAt = getKeyExpiresAt();
       const rotationReminderAt = getRotationReminderAt();
-
       const insertKey = db.prepare(
         "INSERT INTO wallet_keys (key_id, wallet_id, key_type, key_material, created_at) VALUES (?, ?, ?, ?, ?)"
       );
-      const revokeKey = db.prepare(
-        "UPDATE wallet_keys SET revoked_at = ? WHERE key_id = ? AND wallet_id = ?"
-      );
+      const revokeKey = db.prepare("UPDATE wallet_keys SET revoked_at = ? WHERE key_id = ? AND wallet_id = ?");
       const insertAudit = db.prepare(
         "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
       );
 
-      const tx = db.transaction(() => {
+      db.transaction(() => {
         if (body.replaceKeyId) {
           revokeKey.run(createdAt, body.replaceKeyId, walletId);
           insertAudit.run(
@@ -267,35 +220,16 @@ export async function registerWalletRoutes(app: FastifyInstance) {
             createdAt
           );
         }
-        insertKey.run(
-          keyId,
-          walletId,
-          body.keyType,
-          JSON.stringify(body.publicKey),
-          createdAt
-        );
+        insertKey.run(keyId, walletId, body.keyType, JSON.stringify(body.publicKey), createdAt);
         insertAudit.run(
           "KEY_ADDED",
           walletId,
-          JSON.stringify({ 
-            signature_hash: signatureHash, 
-            key_id: keyId,
-            expires_at: expiresAt,
-            rotation_reminder_at: rotationReminderAt
-          }),
+          JSON.stringify({ signature_hash: signatureHash, key_id: keyId, expires_at: expiresAt, rotation_reminder_at: rotationReminderAt }),
           createdAt
         );
-      });
+      })();
 
-      tx();
-
-      reply.code(201).send({
-        keyId,
-        walletId,
-        keyType: body.keyType,
-        createdAt,
-        status: "ACTIVE"
-      });
+      reply.code(201).send({ keyId, walletId, keyType: body.keyType, createdAt, status: "ACTIVE" });
     }
   );
 }
