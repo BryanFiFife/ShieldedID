@@ -14,6 +14,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sync-lockfile:
+    name: One-time lockfile synchronization
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/cryptographic-truth-pass'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Regenerate dependency lock from workspace manifests
+        run: pnpm install --lockfile-only --no-frozen-lockfile
+      - name: Commit lock only when workspace graph changed
+        shell: bash
+        run: |
+          if git diff --quiet -- pnpm-lock.yaml; then
+            echo "lockfile already synchronized"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pnpm-lock.yaml
+          git commit -m "chore: synchronize pnpm lockfile for hardened workspace"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
+          echo "::error::lockfile was synchronized on the source branch; the resulting commit must pass a clean read-only run"
+          exit 1
+
   build-wasm:
     name: Build and attack-test ZK WASM
     runs-on: ubuntu-latest
@@ -105,7 +137,7 @@ jobs:
           exit $bail
 
   test-linux:
-    name: Unit and integration-contract tests (Linux)
+    name: Unit, build and real E2E tests (Linux)
     runs-on: ubuntu-latest
     needs: build-wasm
     steps:
@@ -119,12 +151,14 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - name: Install dependencies
+      - name: Install dependencies reproducibly
         run: pnpm install --frozen-lockfile
       - name: Real ZK unit suite
         run: pnpm -F @shielded-id/age-zk test
       - name: Workspace unit suites
         run: pnpm -r --filter=!shielded-integration-tests --filter=!shielded-verifier-demo test
+      - name: Real issuer-registry-wallet-verifier E2E
+        run: pnpm -F shielded-integration-tests test
       - name: Build production workspaces
         run: pnpm build
       - name: Verifier backend boot check
@@ -158,7 +192,7 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - name: Install dependencies
+      - name: Install dependencies reproducibly
         run: pnpm install --frozen-lockfile
       - name: Real ZK unit suite
         run: pnpm -F @shielded-id/age-zk test
@@ -173,7 +207,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Reject placeholder security coverage
         run: |
-          if grep -R --line-number -E 'expect\(true\)\.toBe\(true\)|simulated proof|In a real implementation, this would verify' packages/age-zk packages/verifier-sdk/tests apps/integration-tests; then
+          if grep -R --line-number -E 'expect\(true\)\.toBe\(true\)|simulated proof|In a real implementation, this would verify|Mocked for CI' packages/age-zk packages/verifier-sdk/tests apps/integration-tests apps/registry-server/tests/e2e-real.test.ts; then
             echo "::error::placeholder or simulated cryptographic coverage detected"
             exit 1
           fi
