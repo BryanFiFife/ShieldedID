@@ -21,6 +21,20 @@ const RECOMMENDED_ROTATION_MS = 90 * 24 * 60 * 60 * 1000;
 function getKeyExpiresAt(): string { return new Date(Date.now() + MAX_KEY_LIFETIME_MS).toISOString(); }
 function getRotationReminderAt(): string { return new Date(Date.now() + RECOMMENDED_ROTATION_MS).toISOString(); }
 
+const p256JwkSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kty", "crv", "x", "y"],
+  properties: {
+    kty: { type: "string", enum: ["EC"] },
+    crv: { type: "string", enum: ["P-256"] },
+    x: { type: "string" },
+    y: { type: "string" },
+    kid: { type: "string" },
+    use: { type: "string" }
+  }
+} as const;
+
 export async function registerWalletRoutes(app: FastifyInstance) {
   app.post(
     "/v1/wallet/register",
@@ -32,27 +46,14 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["publicKeys", "webauthnCredentialId", "suiteVersion", "signature"],
+          required: ["action", "publicKeys", "webauthnCredentialId", "suiteVersion", "signature"],
           properties: {
+            action: { type: "string", const: "WALLET_REGISTER" },
             publicKeys: {
               type: "object",
               additionalProperties: false,
               required: ["signing"],
-              properties: {
-                signing: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["kty", "crv", "x", "y"],
-                  properties: {
-                    kty: { type: "string", enum: ["EC"] },
-                    crv: { type: "string", enum: ["P-256"] },
-                    x: { type: "string" },
-                    y: { type: "string" },
-                    kid: { type: "string" },
-                    use: { type: "string" }
-                  }
-                }
-              }
+              properties: { signing: p256JwkSchema }
             },
             webauthnCredentialId: { type: "string" },
             suiteVersion: { type: "string" },
@@ -80,8 +81,6 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         request.body as typeof registerWalletSchema._type;
       const payload = { action: "WALLET_REGISTER", publicKeys, webauthnCredentialId, suiteVersion };
 
-      // Registration is proof-of-possession of the exact P-256 key that the
-      // verifier will later use for proof-response signatures.
       await verifyRegisterSignature(publicKeys.signing, payload, signature);
 
       const db = getDb();
@@ -92,7 +91,7 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         "INSERT INTO wallets (wallet_id, created_at, suite_version, status) VALUES (?, ?, ?, ?)"
       );
       const insertKey = db.prepare(
-        "INSERT INTO wallet_keys (key_id, wallet_id, key_type, key_material, webauthn_credential_id, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO wallet_keys (key_id, wallet_id, key_type, key_material, webauthn_credential_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
       );
       const insertAudit = db.prepare(
         "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
@@ -103,7 +102,7 @@ export async function registerWalletRoutes(app: FastifyInstance) {
 
       db.transaction(() => {
         insertWallet.run(walletId, createdAt, suiteVersion, "ACTIVE");
-        insertKey.run(keyId, walletId, "SIGNING", JSON.stringify(publicKeys.signing), webauthnCredentialId, createdAt);
+        insertKey.run(keyId, walletId, "SIGNING", JSON.stringify(publicKeys.signing), webauthnCredentialId, createdAt, expiresAt);
         insertAudit.run(
           "WALLET_REGISTERED",
           walletId,
@@ -143,25 +142,15 @@ export async function registerWalletRoutes(app: FastifyInstance) {
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["keyType", "publicKey", "suiteVersion", "signature"],
+          required: ["action", "walletId", "keyType", "publicKey", "suiteVersion", "signature"],
           properties: {
+            action: { type: "string", const: "WALLET_ADD_KEY" },
+            walletId: { type: "string" },
             keyType: { type: "string", enum: ["SIGNING", "RECOVERY", "DEVICE"] },
-            publicKey: {
-              type: "object",
-              additionalProperties: false,
-              required: ["kty", "crv", "x", "y"],
-              properties: {
-                kty: { type: "string", enum: ["EC"] },
-                crv: { type: "string", enum: ["P-256"] },
-                x: { type: "string" },
-                y: { type: "string" },
-                kid: { type: "string" },
-                use: { type: "string" }
-              }
-            },
+            publicKey: p256JwkSchema,
             suiteVersion: { type: "string" },
             signature: { type: "string" },
-            replaceKeyId: { type: "string" }
+            replaceKeyId: { type: ["string", "null"] }
           }
         },
         response: {
@@ -182,10 +171,12 @@ export async function registerWalletRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { walletId } = request.params as { walletId: string };
       const body = request.body as typeof addKeySchema._type;
+      if (body.walletId !== walletId) throw new Error("INVALID_REQUEST");
+
       const db = getDb();
       const wallet = db.prepare("SELECT status FROM wallets WHERE wallet_id = ?").get(walletId) as { status: string } | undefined;
       if (!wallet) throw new Error("WALLET_NOT_FOUND");
-      if (wallet.status === "REVOKED") throw new Error("WALLET_REVOKED");
+      if (wallet.status !== "ACTIVE") throw new Error("WALLET_REVOKED");
 
       const payload = {
         action: "WALLET_ADD_KEY",
@@ -203,7 +194,7 @@ export async function registerWalletRoutes(app: FastifyInstance) {
       const expiresAt = getKeyExpiresAt();
       const rotationReminderAt = getRotationReminderAt();
       const insertKey = db.prepare(
-        "INSERT INTO wallet_keys (key_id, wallet_id, key_type, key_material, created_at) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO wallet_keys (key_id, wallet_id, key_type, key_material, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)"
       );
       const revokeKey = db.prepare("UPDATE wallet_keys SET revoked_at = ? WHERE key_id = ? AND wallet_id = ?");
       const insertAudit = db.prepare(
@@ -220,7 +211,7 @@ export async function registerWalletRoutes(app: FastifyInstance) {
             createdAt
           );
         }
-        insertKey.run(keyId, walletId, body.keyType, JSON.stringify(body.publicKey), createdAt);
+        insertKey.run(keyId, walletId, body.keyType, JSON.stringify(body.publicKey), createdAt, expiresAt);
         insertAudit.run(
           "KEY_ADDED",
           walletId,
