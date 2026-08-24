@@ -1,7 +1,7 @@
 {
   "name": "@shielded-id/attester-sdk",
   "version": "1.5.0",
-  "description": "Shielded ID attester SDK for credential issuance",
+  "description": "Shielded ID attester SDK for issuer-signed commitment credentials",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.cjs",
@@ -16,13 +16,14 @@
   },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
-    "build": "echo 'Attester SDK - no build required'",
+    "build": "echo 'Attester SDK - source package'",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "prepare": "npm run build",
     "publish:npm": "npm publish --access public"
   },
   "dependencies": {
+    "@shielded-id/age-zk": "workspace:*",
     "axios": "^1.7.4",
     "qrcode": "^1.5.3"
   },
