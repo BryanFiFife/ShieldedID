@@ -3,8 +3,7 @@ use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek_ng::ristretto::CompressedRistretto;
 use curve25519_dalek_ng::scalar::Scalar;
 use merlin::Transcript;
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand::{rngs::StdRng, SeedableRng};
 use wasm_bindgen::prelude::*;
 
 const DOMAIN_TRANSCRIPT: &[u8] = b"shielded-id-bound-proof-v2";
@@ -23,19 +22,13 @@ pub struct ProofBundle {
 #[wasm_bindgen]
 impl ProofBundle {
     #[wasm_bindgen(getter)]
-    pub fn commitment(&self) -> Vec<u8> {
-        self.commitment.clone()
-    }
+    pub fn commitment(&self) -> Vec<u8> { self.commitment.clone() }
 
     #[wasm_bindgen(getter)]
-    pub fn proof(&self) -> Vec<u8> {
-        self.proof.clone()
-    }
+    pub fn proof(&self) -> Vec<u8> { self.proof.clone() }
 
     #[wasm_bindgen(getter)]
-    pub fn public_inputs(&self) -> Vec<u8> {
-        self.public_inputs.clone()
-    }
+    pub fn public_inputs(&self) -> Vec<u8> { self.public_inputs.clone() }
 }
 
 fn require_32(input: &[u8], label: &str) -> Result<[u8; 32], JsValue> {
@@ -51,8 +44,8 @@ fn scalar_from_blinding(input: &[u8]) -> Result<Scalar, JsValue> {
     Ok(Scalar::from_bytes_mod_order(require_32(input, "blinding")?))
 }
 
-fn rng_from_entropy(input: &[u8]) -> Result<ChaCha20Rng, JsValue> {
-    Ok(ChaCha20Rng::from_seed(require_32(input, "entropy")?))
+fn rng_from_entropy(input: &[u8]) -> Result<StdRng, JsValue> {
+    Ok(StdRng::from_seed(require_32(input, "entropy")?))
 }
 
 fn encode_public_inputs(op: &str, bound: u64, source_commitment: &[u8; 32], context: &str) -> Vec<u8> {
@@ -101,7 +94,7 @@ fn parse_public_inputs(input: &[u8]) -> Result<ParsedPublicInputs, JsValue> {
     })
 }
 
-fn transcript(op: &[u8], bound: u64, source_commitment: &[u8; 32], context: &str) -> Transcript {
+fn proof_transcript(op: &[u8], bound: u64, source_commitment: &[u8; 32], context: &str) -> Transcript {
     let mut transcript = Transcript::new(DOMAIN_TRANSCRIPT);
     transcript.append_message(b"suite", SUITE);
     transcript.append_message(b"operator", op);
@@ -121,11 +114,9 @@ pub fn commit_value(value: u64, blinding: &[u8]) -> Result<Vec<u8>, JsValue> {
 }
 
 /// Prove that the source commitment opens to a value >= min.
-///
-/// The proof is a real Bulletproof range proof over delta = value - min. The
-/// proof commitment is algebraically tied to the source commitment so a prover
-/// cannot substitute an unrelated in-range value. Neither `value` nor the
-/// blinding secret is serialized into public inputs.
+/// The Bulletproof covers delta = value - min. The range-proof commitment is
+/// algebraically tied to the source commitment, preventing substitution of an
+/// unrelated in-range witness. Raw values never enter public inputs.
 #[wasm_bindgen]
 pub fn prove_ge_bound(
     value: u64,
@@ -134,19 +125,15 @@ pub fn prove_ge_bound(
     blinding: &[u8],
     entropy: &[u8],
 ) -> Result<ProofBundle, JsValue> {
-    let delta = value
-        .checked_sub(min)
+    let delta = value.checked_sub(min)
         .ok_or_else(|| JsValue::from_str("value does not satisfy >= bound"))?;
     let blinding_scalar = scalar_from_blinding(blinding)?;
     let mut rng = rng_from_entropy(entropy)?;
 
     let pc_gens = PedersenGens::default();
     let bp_gens = BulletproofGens::new(BITS, 1);
-    let source_commitment = pc_gens
-        .commit(Scalar::from(value), blinding_scalar)
-        .compress()
-        .to_bytes();
-    let mut transcript = transcript(b"GE", min, &source_commitment, context);
+    let source_commitment = pc_gens.commit(Scalar::from(value), blinding_scalar).compress().to_bytes();
+    let mut transcript = proof_transcript(b"GE", min, &source_commitment, context);
 
     let (proof, delta_commitment) = RangeProof::prove_single_with_rng(
         &bp_gens,
@@ -156,15 +143,10 @@ pub fn prove_ge_bound(
         &blinding_scalar,
         BITS,
         &mut rng,
-    )
-    .map_err(|e| JsValue::from_str(&format!("proof generation failed: {e}")))?;
+    ).map_err(|e| JsValue::from_str(&format!("proof generation failed: {e}")))?;
 
-    // Enforce the algebraic binding explicitly during generation as a defence
-    // against accidental future changes to the commitment construction.
-    let expected = (pc_gens
-        .commit(Scalar::from(value), blinding_scalar)
-        - pc_gens.B * Scalar::from(min))
-        .compress();
+    let expected = (pc_gens.commit(Scalar::from(value), blinding_scalar)
+        - pc_gens.B * Scalar::from(min)).compress();
     if delta_commitment != expected {
         return Err(JsValue::from_str("internal commitment relation mismatch"));
     }
@@ -177,8 +159,8 @@ pub fn prove_ge_bound(
 }
 
 /// Prove that the source commitment opens to a value <= max.
-/// The proof is over delta = max - value and uses the negated source blinding,
-/// allowing the verifier to check C_delta == max*B - C_source.
+/// The proof covers delta = max - value with the negated source blinding, so
+/// the verifier can enforce C_delta == max*B - C_source.
 #[wasm_bindgen]
 pub fn prove_le_bound(
     value: u64,
@@ -187,8 +169,7 @@ pub fn prove_le_bound(
     blinding: &[u8],
     entropy: &[u8],
 ) -> Result<ProofBundle, JsValue> {
-    let delta = max
-        .checked_sub(value)
+    let delta = max.checked_sub(value)
         .ok_or_else(|| JsValue::from_str("value does not satisfy <= bound"))?;
     let source_blinding = scalar_from_blinding(blinding)?;
     let delta_blinding = -source_blinding;
@@ -196,11 +177,8 @@ pub fn prove_le_bound(
 
     let pc_gens = PedersenGens::default();
     let bp_gens = BulletproofGens::new(BITS, 1);
-    let source_commitment = pc_gens
-        .commit(Scalar::from(value), source_blinding)
-        .compress()
-        .to_bytes();
-    let mut transcript = transcript(b"LE", max, &source_commitment, context);
+    let source_commitment = pc_gens.commit(Scalar::from(value), source_blinding).compress().to_bytes();
+    let mut transcript = proof_transcript(b"LE", max, &source_commitment, context);
 
     let (proof, delta_commitment) = RangeProof::prove_single_with_rng(
         &bp_gens,
@@ -210,12 +188,10 @@ pub fn prove_le_bound(
         &delta_blinding,
         BITS,
         &mut rng,
-    )
-    .map_err(|e| JsValue::from_str(&format!("proof generation failed: {e}")))?;
+    ).map_err(|e| JsValue::from_str(&format!("proof generation failed: {e}")))?;
 
     let expected = (pc_gens.B * Scalar::from(max)
-        - pc_gens.commit(Scalar::from(value), source_blinding))
-        .compress();
+        - pc_gens.commit(Scalar::from(value), source_blinding)).compress();
     if delta_commitment != expected {
         return Err(JsValue::from_str("internal commitment relation mismatch"));
     }
@@ -236,9 +212,7 @@ fn verify_bound(
     context: &str,
     entropy: &[u8],
 ) -> Result<bool, JsValue> {
-    if commitment.len() != 32 {
-        return Ok(false);
-    }
+    if commitment.len() != 32 { return Ok(false); }
 
     let parsed = match parse_public_inputs(public_inputs) {
         Ok(parsed) => parsed,
@@ -261,33 +235,25 @@ fn verify_bound(
         "LE" => (pc_gens.B * Scalar::from(bound) - source_point).compress(),
         _ => return Ok(false),
     };
-    if delta_commitment != expected_delta {
-        return Ok(false);
-    }
+    if delta_commitment != expected_delta { return Ok(false); }
 
     let proof = match RangeProof::from_bytes(proof) {
         Ok(proof) => proof,
         Err(_) => return Ok(false),
     };
     let bp_gens = BulletproofGens::new(BITS, 1);
-    let mut transcript = transcript(
-        if expected_op == "GE" { b"GE" } else { b"LE" },
-        bound,
-        &parsed.source_commitment,
-        context,
-    );
+    let op_bytes: &[u8] = if expected_op == "GE" { b"GE" } else { b"LE" };
+    let mut transcript = proof_transcript(op_bytes, bound, &parsed.source_commitment, context);
     let mut rng = rng_from_entropy(entropy)?;
 
-    Ok(proof
-        .verify_single_with_rng(
-            &bp_gens,
-            &pc_gens,
-            &mut transcript,
-            &delta_commitment,
-            BITS,
-            &mut rng,
-        )
-        .is_ok())
+    Ok(proof.verify_single_with_rng(
+        &bp_gens,
+        &pc_gens,
+        &mut transcript,
+        &delta_commitment,
+        BITS,
+        &mut rng,
+    ).is_ok())
 }
 
 #[wasm_bindgen]
@@ -326,8 +292,7 @@ pub fn base64url_encode(bytes: &[u8]) -> String {
 
 #[wasm_bindgen]
 pub fn base64url_decode(value: &str) -> Result<Vec<u8>, JsValue> {
-    general_purpose::URL_SAFE_NO_PAD
-        .decode(value)
+    general_purpose::URL_SAFE_NO_PAD.decode(value)
         .map_err(|_| JsValue::from_str("invalid base64url"))
 }
 
@@ -335,17 +300,9 @@ pub fn base64url_decode(value: &str) -> Result<Vec<u8>, JsValue> {
 mod tests {
     use super::*;
 
-    fn blind() -> [u8; 32] {
-        [7u8; 32]
-    }
-
-    fn prover_entropy() -> [u8; 32] {
-        [11u8; 32]
-    }
-
-    fn verifier_entropy() -> [u8; 32] {
-        [19u8; 32]
-    }
+    fn blind() -> [u8; 32] { [7u8; 32] }
+    fn prover_entropy() -> [u8; 32] { [11u8; 32] }
+    fn verifier_entropy() -> [u8; 32] { [19u8; 32] }
 
     #[test]
     fn ge_round_trip_is_real_and_private() {
@@ -353,12 +310,8 @@ mod tests {
         let text = String::from_utf8(bundle.public_inputs.clone()).unwrap();
         assert!(!text.contains("|25|"));
         assert!(verify_ge_components_with_entropy(
-            &bundle.commitment,
-            &bundle.proof,
-            &bundle.public_inputs,
-            18,
-            "origin|nonce|expiry",
-            &verifier_entropy(),
+            &bundle.commitment, &bundle.proof, &bundle.public_inputs, 18,
+            "origin|nonce|expiry", &verifier_entropy(),
         ).unwrap());
     }
 
@@ -371,31 +324,15 @@ mod tests {
     fn ge_rejects_wrong_bound_context_and_tampering() {
         let bundle = prove_ge_bound(25, 18, "ctx", &blind(), &prover_entropy()).unwrap();
         assert!(!verify_ge_components_with_entropy(
-            &bundle.commitment,
-            &bundle.proof,
-            &bundle.public_inputs,
-            21,
-            "ctx",
-            &verifier_entropy(),
+            &bundle.commitment, &bundle.proof, &bundle.public_inputs, 21, "ctx", &verifier_entropy(),
         ).unwrap());
         assert!(!verify_ge_components_with_entropy(
-            &bundle.commitment,
-            &bundle.proof,
-            &bundle.public_inputs,
-            18,
-            "other",
-            &verifier_entropy(),
+            &bundle.commitment, &bundle.proof, &bundle.public_inputs, 18, "other", &verifier_entropy(),
         ).unwrap());
-
         let mut tampered = bundle.proof.clone();
         tampered[0] ^= 0x01;
         assert!(!verify_ge_components_with_entropy(
-            &bundle.commitment,
-            &tampered,
-            &bundle.public_inputs,
-            18,
-            "ctx",
-            &verifier_entropy(),
+            &bundle.commitment, &tampered, &bundle.public_inputs, 18, "ctx", &verifier_entropy(),
         ).unwrap());
     }
 
@@ -403,27 +340,16 @@ mod tests {
     fn le_round_trip_and_relation_tamper_rejection() {
         let bundle = prove_le_bound(100, 120, "ctx", &blind(), &prover_entropy()).unwrap();
         assert!(verify_le_components_with_entropy(
-            &bundle.commitment,
-            &bundle.proof,
-            &bundle.public_inputs,
-            120,
-            "ctx",
-            &verifier_entropy(),
+            &bundle.commitment, &bundle.proof, &bundle.public_inputs, 120, "ctx", &verifier_entropy(),
         ).unwrap());
 
-        let other_blind = [8u8; 32];
-        let other_source = commit_value(100, &other_blind).unwrap();
+        let other_source = commit_value(100, &[8u8; 32]).unwrap();
         let mut text = String::from_utf8(bundle.public_inputs.clone()).unwrap();
         let original = general_purpose::URL_SAFE_NO_PAD.encode(commit_value(100, &blind()).unwrap());
         let replacement = general_purpose::URL_SAFE_NO_PAD.encode(other_source);
         text = text.replace(&original, &replacement);
         assert!(!verify_le_components_with_entropy(
-            &bundle.commitment,
-            &bundle.proof,
-            text.as_bytes(),
-            120,
-            "ctx",
-            &verifier_entropy(),
+            &bundle.commitment, &bundle.proof, text.as_bytes(), 120, "ctx", &verifier_entropy(),
         ).unwrap());
     }
 }
