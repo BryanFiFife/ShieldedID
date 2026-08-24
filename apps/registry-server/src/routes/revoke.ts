@@ -14,16 +14,17 @@ export async function registerRevokeRoutes(app: FastifyInstance) {
     "/v1/revoke",
     {
       schema: {
-        description: "Revoke keys or credentials",
+        description: "Revoke wallet keys or credentials",
         tags: ["revoke"],
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["walletId", "targetType", "targetIds", "reason", "signature"],
+          required: ["action", "walletId", "targetType", "targetIds", "reason", "signature"],
           properties: {
+            action: { type: "string", const: "WALLET_REVOKE" },
             walletId: { type: "string" },
             targetType: { type: "string", enum: ["KEY", "CREDENTIAL"] },
-            targetIds: { type: "array", items: { type: "string" } },
+            targetIds: { type: "array", minItems: 1, maxItems: 100, items: { type: "string" } },
             reason: { type: "string" },
             signature: { type: "string" }
           }
@@ -31,6 +32,7 @@ export async function registerRevokeRoutes(app: FastifyInstance) {
         response: {
           200: {
             type: "object",
+            required: ["ok", "revokedCount", "effectiveAt"],
             properties: {
               ok: { type: "boolean" },
               revokedCount: { type: "number" },
@@ -59,38 +61,40 @@ export async function registerRevokeRoutes(app: FastifyInstance) {
       const signatureHash = await assertNotReplayed(walletId, payload, signature);
 
       const db = getDb();
-      const effectiveAt = nowIso();
+      const wallet = db.prepare("SELECT status FROM wallets WHERE wallet_id = ?").get(walletId) as { status: string } | undefined;
+      if (!wallet) throw new Error("WALLET_NOT_FOUND");
+      if (wallet.status !== "ACTIVE") throw new Error("WALLET_REVOKED");
 
+      const effectiveAt = nowIso();
       const insertRevocation = db.prepare(
         "INSERT INTO revocations (revocation_id, target_type, target_id, reason_code, effective_at, signature) VALUES (?, ?, ?, ?, ?, ?)"
       );
       const revokeKey = db.prepare(
-        "UPDATE wallet_keys SET revoked_at = ? WHERE key_id = ? AND wallet_id = ?"
+        "UPDATE wallet_keys SET revoked_at = ? WHERE key_id = ? AND wallet_id = ? AND revoked_at IS NULL"
       );
       const insertAudit = db.prepare(
         "INSERT INTO audit_events (event_type, wallet_id, metadata, timestamp) VALUES (?, ?, ?, ?)"
       );
 
       let revokedCount = 0;
-      const tx = db.transaction(() => {
+      db.transaction(() => {
         for (const targetId of targetIds) {
-          const revocationId = randomUUID();
+          if (targetType === "KEY") {
+            const result = revokeKey.run(effectiveAt, targetId, walletId);
+            if (result.changes === 0) continue;
+            revokedCount += result.changes;
+          } else {
+            revokedCount += 1;
+          }
+
           insertRevocation.run(
-            revocationId,
+            randomUUID(),
             targetType,
             targetId,
             reason,
             effectiveAt,
             signature
           );
-          if (targetType === "KEY") {
-            const result = revokeKey.run(effectiveAt, targetId, walletId);
-            if (result.changes > 0) {
-              revokedCount += 1;
-            }
-          } else {
-            revokedCount += 1;
-          }
         }
 
         insertAudit.run(
@@ -99,14 +103,14 @@ export async function registerRevokeRoutes(app: FastifyInstance) {
           JSON.stringify({
             signature_hash: signatureHash,
             target_type: targetType,
-            target_count: targetIds.length
+            target_count: targetIds.length,
+            revoked_count: revokedCount
           }),
           effectiveAt
         );
-      });
+      })();
 
-      tx();
-
+      reply.header("Cache-Control", "no-store");
       reply.send({
         ok: true,
         revokedCount,
