@@ -1,690 +1,91 @@
-# Routes & Guarantees: Shielded ID API
-
-**Version:** 1.0  
-**Last Updated:** 2026-01-13
+# Shielded ID Registry Routes and Contract Notes
 
-## 1. Registry Server Routes
+**Applies to:** ShieldedID v1.6.x  
+**Last updated:** 2026-08-24
 
-### Base URL
+## Source of truth
 
-```
-Development:  http://localhost:3000
-Production:   https://api.zkdigitalid.com (example)
-```
+The authoritative HTTP contract is the Fastify route/schema implementation under `apps/registry-server/src/routes/` together with the generated OpenAPI documentation exposed by the running registry at `/docs`.
 
-### Authentication
+This document is a human-readable orientation layer. It deliberately avoids promising cache lifetimes, uptime, idempotency or deployment guarantees that are not enforced by the current source.
 
-- **Admin routes** (`/api/admin/*`): Require `shielded_admin_session` cookie (24h expiry, HTTPOnly, sameSite=strict)
-- **User routes** (`/api/user/*`): Require `shielded_admin_session` cookie
-- **Wallet routes** (`/v1/*`): Stateless (signature verification)
-- **Public routes** (`/api/contact`): Rate-limited (5 req/min)
-
-### Error Handling
-
-**All error responses follow this format:**
-
-```json
-{
-  "ok": false,
-  "error": "ERROR_CODE",
-  "message": "Human-readable description (optional)"
-}
-```
-
-**Common error codes:**
-
-| Code | HTTP Status | Meaning |
-|------|-------------|---------|
-| `INVALID_CREDENTIALS` | 401 | Login failed (wrong email/password) |
-| `UNAUTHORIZED` | 403 | Missing session cookie or expired |
-| `NOT_FOUND` | 404 | Resource doesn't exist |
-| `WALLET_NOT_FOUND` | 404 | Wallet ID doesn't exist in registry |
-| `USER_EXISTS` | 409 | Email already registered |
-| `PASSWORD_MIN_12_CHARS` | 400 | Password < 12 characters |
-| `PASSWORD_NEEDS_UPPERCASE` | 400 | Password missing uppercase letter |
-| `PASSWORD_NEEDS_LOWERCASE` | 400 | Password missing lowercase letter |
-| `PASSWORD_NEEDS_NUMBER` | 400 | Password missing digit |
-| `PASSWORD_NEEDS_SPECIAL` | 400 | Password missing special character |
+The previous version contained stale v1.5 request/response examples and several inaccurate guarantees, including long-lived caching for trust status and blanket "no PII" statements. Those claims have been removed.
 
----
-
-## 2. Wallet Routes (`/v1/*`)
-
-### `POST /v1/wallet/register`
-
-**Purpose:** Register a new wallet in the registry.
-
-**Request:**
-
-```json
-{
-  "publicKeyJwk": {
-    "kty": "EC",
-    "crv": "P-256",
-    "x": "base64-url-encoded-x",
-    "y": "base64-url-encoded-y"
-  },
-  "webauthnCredentialId": "credential-id-hex (optional)"
-}
-```
+## Core route groups
 
-**Response (Success):**
+### Wallet registration and key lifecycle
 
-```json
-{
-  "ok": true,
-  "walletId": "uuid-v4",
-  "createdAt": "2025-01-01T12:00:00Z",
-  "status": "ACTIVE"
-}
-```
+Current wallet routes include:
 
-**Response (Failure):**
+- `POST /v1/wallet/register`
+- `POST /v1/wallet/:walletId/keys`
 
-```json
-{
-  "ok": false,
-  "error": "INVALID_REQUEST",
-  "message": "publicKeyJwk is required"
-}
-```
-
-**Guarantees:**
-- ✅ Idempotent: Multiple calls with same key → same `walletId`
-- ✅ Status immediately: Wallet active after registration
-- ✅ No PII stored: Only public key + metadata
-
----
-
-### `GET /v1/wallet/:id/keys`
-
-**Purpose:** Retrieve public keys for a wallet (for proof verification).
-
-**Request:**
+Wallet registration requires proof of possession of the exact P-256 signing public key being registered. Successful registration returns both a `walletId` and the created signing `keyId`.
 
-```
-GET /v1/wallet/550e8400-e29b-41d4-a716-446655440000/keys
-```
+Adding/rotating a wallet key requires a signature from an already authorised wallet key and is subject to request validation, replay protection and rate limits.
 
-**Response:**
+Do not treat WebAuthn credential metadata as the proof-signing public key. The hardened wallet architecture uses a dedicated registered P-256 proof-signing key.
 
-```json
-{
-  "ok": true,
-  "walletId": "550e8400-e29b-41d4-a716-446655440000",
-  "keys": [
-    {
-      "keyId": "key-uuid-1",
-      "keyType": "SIGNING",
-      "publicKeyJwk": { "kty": "EC", "crv": "P-256", "x": "...", "y": "..." },
-      "createdAt": "2025-01-01T12:00:00Z",
-      "revokedAt": null
-    }
-  ]
-}
-```
-
-**Guarantees:**
-- ✅ Public endpoint: No authentication required
-- ✅ Cached: CDN-safe (Cache-Control: max-age=3600)
-- ✅ Revoked keys included: Shows `revokedAt` timestamp
-
----
+### Wallet/key status
 
-### `GET /v1/status/:walletId`
+Trust-sensitive status routes expose current wallet/key state for verifier decisions. The verifier uses exact wallet/key identifiers and fails closed when required trust state cannot be obtained or validated.
 
-**Purpose:** Check wallet status and revocation state.
+Trust/revocation responses should not be treated as indefinitely cacheable. Current hardened verification expects current key state and the registry route implementation sets trust-sensitive cache behaviour accordingly.
 
-**Request:**
+### Revocation
 
-```
-GET /v1/status/550e8400-e29b-41d4-a716-446655440000
-```
+Wallet/key revocation routes require authenticated/signed authority according to the route implementation and record lifecycle state in the registry.
 
-**Response:**
+The integration test exercises rejection after wallet-key revocation. Operators should still define who is authorised to revoke keys and how emergency compromise response is handled.
 
-```json
-{
-  "ok": true,
-  "walletId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "ACTIVE",
-  "revokedAt": null,
-  "keysCount": 1,
-  "lastActivityAt": "2025-01-15T10:30:00Z"
-}
-```
+### Issuer key registration and trust
 
-**Status values:** `ACTIVE`, `REVOKED`, `SUSPENDED`
+Current issuer routes include the hardened issuer-key trust path under `/v1/issuers/:issuerDid/...`.
 
-**Guarantees:**
-- ✅ Public endpoint: No authentication required
-- ✅ Real-time: Reflects immediate revocations
-- ✅ Privacy: No wallet contents disclosed
+Issuer key registration/revocation is an administrative operation protected by the configured issuer registration secret. Public lookup returns the issuer public key/status required by verifiers.
 
----
+Compatibility routes under `/api/attesters/...` exist only to preserve the attester SDK write surface while storing trust material in the hardened issuer-key registry model.
 
-### `POST /v1/revoke`
-
-**Purpose:** Revoke a key or entire wallet.
+### Backup and administrative routes
 
-**Request:**
+The registry also contains backup, contact and administrative functionality. These are operational/application routes and are not part of the cryptographic proof soundness argument.
 
-```json
-{
-  "targetType": "KEY",
-  "targetId": "key-uuid-or-wallet-id",
-  "reasonCode": "KEY_COMPROMISE",
-  "signature": "base64-encoded-ECDSA-signature"
-}
-```
+Because these routes may handle ordinary application data, the project does **not** make a blanket claim that the entire registry server stores no personal information. The narrower cryptographic claim is that raw private DOB/KYC witnesses and Pedersen blindings are not required to be stored by the registry for the supported proof flow.
 
-**Response:**
+## Contract invariants relevant to verification
 
-```json
-{
-  "ok": true,
-  "revocationId": "uuid-v4",
-  "effectiveAt": "2025-01-01T12:00:00Z"
-}
-```
+For the hardened proof path, the verifier expects:
 
-**Target types:** `KEY`, `CREDENTIAL`, `WALLET`  
-**Reason codes:** `KEY_COMPROMISE`, `USER_REQUEST`, `ADMIN_REVOCATION`
+1. exact request ID and nonce agreement;
+2. verifier origin/context and expiry binding;
+3. the exact registered wallet signing `keyId`;
+4. an active wallet/key state;
+5. a valid wallet P-256 signature over the response;
+6. issuer metadata that matches the claim evidence;
+7. an active issuer/key state;
+8. a valid issuer P-256 signature over the commitment attestation;
+9. exact equality between the proof's source commitment and issuer-attested commitment;
+10. a valid Bulletproof for the requested bound and context;
+11. rejection of unsupported predicate families.
 
-**Guarantees:**
-- ✅ Immutable: Revocations cannot be undone
-- ✅ Signed: Signature verified using corresponding key
-- ✅ Timestamped: Effective timestamp included in audit trail
+Any integration that bypasses these checks is outside the supported v1.6.x security contract.
 
----
+## Error handling
 
-### `POST /v1/backup`
+Consumers should treat HTTP status and machine-readable error codes as part of the contract, but should not depend on undocumented human-readable error strings.
 
-**Purpose:** Store encrypted vault backup on registry.
+Unknown/malformed identifiers, missing required trust material, invalid signatures, revoked/expired keys and invalid proof/request state should be handled as verification failure rather than silently downgraded to a weaker trust path.
 
-**Request:**
+## Deployment boundary
 
-```json
-{
-  "walletId": "wallet-uuid",
-  "ciphertext": "hex-encoded-AES-256-GCM-ciphertext",
-  "algorithm": "AES-256-GCM"
-}
-```
+The route implementation does not itself guarantee:
 
-**Response:**
+- public internet availability;
+- a specific uptime/SLA;
+- TLS termination;
+- WAF/reverse-proxy policy;
+- organisational admin/IAM procedures;
+- data-retention policy;
+- legal/regulatory compliance.
 
-```json
-{
-  "ok": true,
-  "backupId": "uuid-v4",
-  "createdAt": "2025-01-01T12:00:00Z"
-}
-```
-
-**Guarantees:**
-- ✅ Encrypted: Stored as ciphertext (server never sees plaintext)
-- ✅ Retrievable: User provides passphrase to decrypt locally
-- ✅ Versioned: Multiple backups allowed (latest retrievable)
-
----
-
-## 3. Admin Routes (`/api/admin/*`)
-
-### `POST /api/admin/login`
-
-**Purpose:** Authenticate admin user.
-
-**Request:**
-
-```json
-{
-  "email": "admin@example.com",
-  "password": "SecurePass123!"
-}
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "email": "admin@example.com"
-}
-```
-
-**Guarantees:**
-- ✅ Sets `shielded_admin_session` cookie (24h, HTTPOnly, sameSite=strict)
-- ✅ Password hashed: bcrypt 10-round hash stored, plaintext never logged
-- ✅ Rate-limited: 100 login attempts/min (per IP)
-
-**Password Requirements:**
-- Minimum 12 characters
-- At least one uppercase letter
-- At least one lowercase letter
-- At least one digit (0-9)
-- At least one special character (!@#$%^&*()_+-=[]{}';:"\\|,.<>/?)
-
----
-
-### `POST /api/admin/logout`
-
-**Purpose:** Invalidate session.
-
-**Request:**
-
-```
-POST /api/admin/logout (no body required)
-```
-
-**Response:**
-
-```json
-{
-  "ok": true
-}
-```
-
-**Guarantees:**
-- ✅ Immediate: Session deleted from database
-- ✅ Cookie cleared: Browser cookie removed
-
----
-
-### `GET /api/admin/session`
-
-**Purpose:** Check current session status.
-
-**Request:**
-
-```
-GET /api/admin/session
-```
-
-**Response (Logged In):**
-
-```json
-{
-  "ok": true,
-  "email": "admin@example.com"
-}
-```
-
-**Response (Not Logged In):**
-
-```json
-{
-  "ok": false,
-  "email": null
-}
-```
-
----
-
-### `GET /api/admin/inbox`
-
-**Purpose:** List contact messages.
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "messages": [
-    {
-      "id": "msg-uuid",
-      "name": "John Doe",
-      "email": "john@example.com",
-      "subject": "Question about...",
-      "status": "NEW",
-      "createdAt": "2025-01-15T10:30:00Z",
-      "updatedAt": "2025-01-15T10:30:00Z"
-    }
-  ]
-}
-```
-
-**Guarantees:**
-- ✅ Sorted: Newest first
-- ✅ Paginated: Limit 100 (add `limit`/`offset` if needed)
-
----
-
-### `GET /api/admin/messages/:id`
-
-**Purpose:** View message details.
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "message": {
-    "id": "msg-uuid",
-    "name": "John Doe",
-    "email": "john@example.com",
-    "subject": "Question about...",
-    "message": "Full message body...",
-    "status": "NEW",
-    "createdAt": "2025-01-15T10:30:00Z",
-    "updatedAt": "2025-01-15T10:30:00Z"
-  }
-}
-```
-
----
-
-### `POST /api/admin/messages/:id/status`
-
-**Purpose:** Update message status (mark read, archive).
-
-**Request:**
-
-```json
-{
-  "status": "READ"
-}
-```
-
-**Valid statuses:** `NEW`, `READ`, `ARCHIVED`
-
-**Response:**
-
-```json
-{
-  "ok": true
-}
-```
-
----
-
-### `GET /api/admin/audit`
-
-**Purpose:** View audit log (last 100 events).
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "events": [
-    {
-      "id": 1,
-      "eventType": "LOGIN_SUCCESS",
-      "metadata": { "adminEmail": "admin@example.com" },
-      "timestamp": "2025-01-15T10:30:00Z"
-    },
-    {
-      "id": 2,
-      "eventType": "KEY_ADDED",
-      "metadata": { "walletId": "wallet-uuid", "keyType": "SIGNING" },
-      "timestamp": "2025-01-15T10:31:00Z"
-    }
-  ]
-}
-```
-
-**Event types:** `LOGIN_SUCCESS`, `LOGIN_FAILED`, `LOGOUT`, `KEY_ADDED`, `KEY_REVOKED`, `WALLET_REGISTERED`, `WALLET_REVOKED`, `CONTACT_RECEIVED`, `CONTACT_VIEWED`, `CONTACT_STATUS`, `USER_REGISTERED`, `USER_LOGIN`
-
----
-
-### `GET /api/admin/revocations`
-
-**Purpose:** View revocation events (last 50).
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "revocations": [
-    {
-      "revocationId": "rev-uuid",
-      "targetType": "KEY",
-      "targetId": "key-uuid",
-      "reasonCode": "KEY_COMPROMISE",
-      "effectiveAt": "2025-01-15T10:30:00Z"
-    }
-  ]
-}
-```
-
----
-
-## 4. User Routes (`/api/user/*`)
-
-### `POST /api/user/register`
-
-**Purpose:** Create user account.
-
-**Request:**
-
-```json
-{
-  "email": "user@example.com",
-  "password": "SecurePass123!"
-}
-```
-
-**Response:**
-
-```json
-{
-  "ok": true
-}
-```
-
-**Guarantees:**
-- ✅ Email unique: Duplicate registration rejected
-- ✅ Password strong: Server validates 12-char + complexity rules
-- ✅ No login: Separate `/api/user/login` call required
-
----
-
-### `POST /api/user/login`
-
-**Purpose:** Authenticate user.
-
-**Request:**
-
-```json
-{
-  "email": "user@example.com",
-  "password": "SecurePass123!"
-}
-```
-
-**Response:**
-
-```json
-{
-  "ok": true
-}
-```
-
-**Guarantees:**
-- ✅ Sets session cookie (same as admin)
-- ✅ Password compared: bcrypt.compare() only
-
----
-
-### `POST /api/user/logout`
-
-**Purpose:** Invalidate user session.
-
-**Response:**
-
-```json
-{
-  "ok": true
-}
-```
-
----
-
-### `POST /api/user/forgot-password`
-
-**Purpose:** Initiate password reset.
-
-**Request:**
-
-```json
-{
-  "email": "user@example.com"
-}
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "message": "Password reset email sent"
-}
-```
-
-**Note:** Current implementation returns success without sending email (future: integrate mail service).
-
----
-
-## 5. Public Routes
-
-### `POST /api/contact`
-
-**Purpose:** Submit contact form (public, rate-limited).
-
-**Request:**
-
-```json
-{
-  "name": "John Doe",
-  "email": "john@example.com",
-  "subject": "Feedback",
-  "message": "Your product is great!"
-}
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "id": "msg-uuid"
-}
-```
-
-**Rate limit:** 5 requests per minute per IP
-
-**Guarantees:**
-- ✅ PII collected: Name, email, message stored (PII notice required on UI)
-- ✅ No spam: Rate limiting prevents abuse
-- ✅ Stored: Accessible via `/api/admin/inbox`
-
----
-
-## 6. Static Routes
-
-### `GET /`
-
-Serves PWA `index.html` (SPA shell).
-
-### `GET /admin`
-
-Serves admin dashboard `admin/index.html`.
-
-### `GET /docs`
-
-Swagger UI: OpenAPI documentation.
-
----
-
-## 7. Error Handling & No-404 Policy
-
-**All endpoints enforce a "no 404" policy for API routes:**
-
-```
-GET /api/unknown/route
-↓
-200 OK
-{
-  "ok": false,
-  "error": "NOT_FOUND",
-  "path": "/api/unknown/route"
-}
-```
-
-**This prevents:**
-- ✅ Enumeration attacks (route discovery)
-- ✅ Leaking API structure
-- ✅ Timing-based information disclosure
-
----
-
-## 8. Rate Limiting
-
-| Endpoint | Limit | Window |
-|----------|-------|--------|
-| `/api/contact` | 5 | 1 minute |
-| `/api/admin/login` | 100 | 1 minute |
-| `/api/user/login` | 100 | 1 minute |
-| `/v1/*` | 1000 | 1 minute (default) |
-
----
-
-## 9. CORS Policy
-
-**Development:**
-
-```
-Access-Control-Allow-Origin: http://localhost:5173, http://localhost:5174
-```
-
-**Production:**
-
-```
-Access-Control-Allow-Origin: https://wallet.zkdigitalid.com, https://verifier.zkdigitalid.com
-```
-
----
-
-## 10. Response Guarantees
-
-### JSON Format
-
-All responses are JSON (no XML, no plain text):
-
-```json
-{
-  "ok": true|false,
-  "error": "ERROR_CODE (if ok=false)",
-  "data": "..." (endpoint-specific)
-}
-```
-
-### HTTP Status Codes
-
-| Code | Meaning | Example |
-|------|---------|---------|
-| 200 | Success or handled error | Correct login, or `ok: false` with error code |
-| 400 | Bad request | Invalid JSON, missing fields |
-| 401 | Unauthorized (no auth) | Missing session cookie |
-| 403 | Forbidden (wrong auth) | Invalid session cookie |
-| 404 | Unknown route (API enforcement) | Returns 200 with `error: NOT_FOUND` |
-| 429 | Too many requests | Rate limit exceeded |
-| 500 | Server error | Database crash, uncaught exception |
-
----
-
-## 11. Future Enhancements
-
-- [ ] Pagination cursors (`/api/admin/audit?cursor=...&limit=50`)
-- [ ] Bulk revocation endpoint
-- [ ] Webhook delivery for revocation events
-- [ ] Multi-factor authentication for admins
-- [ ] Key rotation endpoint
-- [ ] CORS dynamic configuration
-- [ ] GraphQL alternative API
-
----
-
-**End of Document**
+Those are deployment responsibilities. See `docs/PRODUCTION_READINESS.md`, `SECURITY.md` and `COMPLIANCE.md` for the current assurance boundary.
