@@ -1,5 +1,5 @@
 import { generatePairwiseSubjectId } from "./pairwise-id";
-import { decryptSigningKey, signWithPasskey, signWithSoftwareKey } from "./keys";
+import { decryptSigningKey, signWithSoftwareKey } from "./keys";
 import type { NumericCommitmentAttestation, VaultPayload } from "./vault";
 import { prove_ge_attested, prove_le_attested } from "@shielded-id/age-zk";
 
@@ -11,8 +11,9 @@ type PredicateOperator = "GE" | "LE";
 export interface ProofRequest {
   requestId: string;
   nonce: string;
+  issuedAt: string;
   verifierOrigin: string;
-  expiresAt?: string;
+  expiresAt: string;
   requestedClaims: Array<{
     type: SupportedClaimType | string;
     operator?: PredicateOperator;
@@ -25,7 +26,7 @@ export interface ProofResponse {
   requestId: string;
   nonce: string;
   walletId: string;
-  keyId?: string;
+  keyId: string;
   pairwiseSubjectId: string;
   claims: Array<{
     type: SupportedClaimType;
@@ -77,11 +78,12 @@ function bytesFromBase64(value: string): Uint8Array {
   return bytes;
 }
 
-function cutoffYyyymmdd(age: number, now = new Date()): number {
+function cutoffYyyymmdd(age: number, at: Date): number {
   if (!Number.isInteger(age) || age < 0 || age > 150) throw new Error("INVALID_AGE_THRESHOLD");
-  const year = now.getUTCFullYear() - age;
-  const month = now.getUTCMonth();
-  const day = now.getUTCDate();
+  if (!Number.isFinite(at.getTime())) throw new Error("INVALID_REQUEST_ISSUED_AT");
+  const year = at.getUTCFullYear() - age;
+  const month = at.getUTCMonth();
+  const day = at.getUTCDate();
   const maxDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const clampedDay = Math.min(day, maxDay);
   return year * 10000 + (month + 1) * 100 + clampedDay;
@@ -100,17 +102,23 @@ function requireCurrentAttestation(attestation: NumericCommitmentAttestation, ex
 export async function generateProof(
   request: ProofRequest,
   vault: VaultPayload,
-  options: { walletId: string; keyId?: string; passphrase?: string }
+  options: { walletId: string; keyId: string; passphrase?: string }
 ): Promise<ProofResponse> {
   if (!vault.masterSecret) throw new Error("MASTER_SECRET_MISSING");
-  if (!request.requestId || !request.nonce || !request.verifierOrigin) throw new Error("INVALID_PROOF_REQUEST");
-  if (request.expiresAt && Date.parse(request.expiresAt) <= Date.now()) throw new Error("PROOF_REQUEST_EXPIRED");
+  if (!request.requestId || !request.nonce || !request.verifierOrigin || !request.issuedAt || !request.expiresAt) {
+    throw new Error("INVALID_PROOF_REQUEST");
+  }
+  const issuedAt = new Date(request.issuedAt);
+  const expiresAt = Date.parse(request.expiresAt);
+  if (!Number.isFinite(issuedAt.getTime()) || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw new Error("PROOF_REQUEST_EXPIRED_OR_INVALID");
+  }
 
   const pairwiseSubjectId = await generatePairwiseSubjectId(
     bytesFromBase64(vault.masterSecret),
     request.verifierOrigin
   );
-  const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt ?? ""}`;
+  const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt}`;
   const claims: ProofResponse["claims"] = [];
   const zkProofs: NonNullable<ProofResponse["zkProofs"]> = {};
 
@@ -127,7 +135,7 @@ export async function generateProof(
       if (!witness) throw new Error("ISSUER_ATTESTATION_REQUIRED:AGE_OVER");
       requireCurrentAttestation(witness.attestation, "DOB_YYYYMMDD");
       const threshold = requested.threshold ?? 18;
-      const cutoff = cutoffYyyymmdd(threshold);
+      const cutoff = cutoffYyyymmdd(threshold, issuedAt);
       const proof = await prove_le_attested(witness.value, cutoff, context, witness.blinding);
 
       claims.push({
@@ -185,6 +193,8 @@ export async function generateProof(
     throw new Error(`UNSUPPORTED_CLAIM_TYPE:${requested.type}`);
   }
 
+  if (!vault.signingKeyEncrypted || !options.passphrase) throw new Error("SIGNING_KEY_UNAVAILABLE");
+
   const response: ProofResponse = {
     requestId: request.requestId,
     nonce: request.nonce,
@@ -200,18 +210,6 @@ export async function generateProof(
   const payload = { ...response } as Record<string, unknown>;
   delete payload.signature;
   const message = encoder.encode(stableStringify(payload));
-
-  if (vault.webauthnCredentialId) {
-    try {
-      const signature = await signWithPasskey(message);
-      response.signature = base64FromBytes(signature);
-      return response;
-    } catch (err) {
-      console.warn("[Proof] WebAuthn signing unavailable; trying encrypted software key", err);
-    }
-  }
-
-  if (!vault.signingKeyEncrypted || !options.passphrase) throw new Error("SIGNING_KEY_UNAVAILABLE");
   const privateKey = await decryptSigningKey(options.passphrase, bytesFromBase64(vault.signingKeyEncrypted));
   response.signature = base64FromBytes(await signWithSoftwareKey(message, privateKey));
   return response;
