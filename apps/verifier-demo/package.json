@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@shielded-id/verifier-sdk": "file:../../packages/verifier-sdk",
-    "express": "^4.19.2",
+    "express": "^4.22.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -25,12 +25,12 @@
     "@types/node": "^20.11.30",
     "@types/react": "^18.2.79",
     "@types/react-dom": "^18.2.25",
-    "@vitejs/plugin-react": "^4.2.1",
-    "jsdom": "^24.0.0",
+    "@vitejs/plugin-react": "^6.1.0",
+    "jsdom": "^30.0.1",
     "typescript": "^5.4.5",
-    "vite": "^5.2.0",
-    "vitest": "^1.4.0",
-    "@vitest/coverage-v8": "^1.4.0",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.11",
     "tsx": "^4.7.2"
   }
 }
