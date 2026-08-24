@@ -32,7 +32,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@eslint/js": "^10.9.0",
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.30",
     "@types/react": "^18.3.3",
@@ -41,7 +41,7 @@
     "@typescript-eslint/eslint-plugin": "^8.67.0",
     "@typescript-eslint/parser": "^8.67.0",
     "@vitest/coverage-v8": "^4.1.11",
-    "eslint": "^10.9.0",
+    "eslint": "^10.0.1",
     "globals": "^17.0.0",
     "playwright": "^1.41.2",
     "react": "^18.3.1",
