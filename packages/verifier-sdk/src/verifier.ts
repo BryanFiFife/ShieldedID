@@ -1,35 +1,33 @@
 import * as QRCode from "qrcode";
-import { RegistryClient } from "./registry.js";
-import {
+import { RegistryClient, type WalletStatusResponse } from "./registry.js";
+import type {
   Claim,
+  NumericCommitmentAttestation,
   ProofRequest,
   ProofResponse,
+  RequestedClaim,
   VerificationOptions,
   VerificationResult,
-  VerifierConfig
+  VerifierConfig,
+  ZkProofEntry
 } from "./types.js";
-import {
-  canonicalPayload,
-  validateNonce,
-  validateTimestamp,
-  verifyECDSAP256
-} from "./crypto.js";
+import { canonicalPayload, validateNonce, validateTimestamp, verifyECDSAP256 } from "./crypto.js";
 import { addSeconds, base64UrlDecode, base64UrlEncode, nowIso, stableStringify } from "./utils.js";
-import { verify_ge_components } from "@shielded-id/age-zk";
+import {
+  source_commitment_from_public_inputs,
+  verify_ge_components,
+  verify_le_components
+} from "@shielded-id/age-zk";
 
 function ensureRandomUUID(): string {
   const cryptoObj = globalThis.crypto ?? (globalThis as { webcrypto?: Crypto }).webcrypto;
-  if (!cryptoObj || !cryptoObj.randomUUID) {
-    throw new Error("RANDOM_UUID_NOT_AVAILABLE");
-  }
+  if (!cryptoObj?.randomUUID) throw new Error("RANDOM_UUID_NOT_AVAILABLE");
   return cryptoObj.randomUUID();
 }
 
 function randomNonce(bytes = 32): string {
   const cryptoObj = globalThis.crypto ?? (globalThis as { webcrypto?: Crypto }).webcrypto;
-  if (!cryptoObj || !cryptoObj.getRandomValues) {
-    throw new Error("RANDOM_NOT_AVAILABLE");
-  }
+  if (!cryptoObj?.getRandomValues) throw new Error("RANDOM_NOT_AVAILABLE");
   const buffer = new Uint8Array(bytes);
   cryptoObj.getRandomValues(buffer);
   return base64UrlEncode(buffer);
@@ -44,335 +42,97 @@ function buildProofLink(request: ProofRequest): string {
   return `shielded-id://proof?${params.toString()}`;
 }
 
-function findSigningKey(keys: Array<{ publicKey?: JsonWebKey; keyMaterial?: JsonWebKey; status?: string }> | undefined) {
-  if (!keys) return null;
-  const active = keys.find((key) => key.status !== "REVOKED");
+function findSigningKey(
+  keys: WalletStatusResponse["keys"],
+  requiredKeyId?: string
+): JsonWebKey | null {
+  if (!keys || !requiredKeyId) return null;
+  const active = keys.find((key) => key.keyId === requiredKeyId && key.status !== "REVOKED");
   return active?.publicKey ?? active?.keyMaterial ?? null;
 }
 
-function computeAssuranceLevel(claims: Claim[], request: ProofRequest): number {
-  const levelClaim = claims.find((claim) => claim.type === "KYC_LEVEL");
-  if (levelClaim && typeof levelClaim.value === "boolean" && levelClaim.value === true) {
-    // Find the minLevel from the request
-    const kycRequest = request.requestedClaims.find((c) => c.type === "KYC_LEVEL");
-    return kycRequest?.minLevel ?? 0;
+function cutoffYyyymmdd(age: number, at: Date): number {
+  if (!Number.isInteger(age) || age < 0 || age > 150 || !Number.isFinite(at.getTime())) {
+    throw new Error("INVALID_AGE_THRESHOLD");
   }
-  return 0;
+  const year = at.getUTCFullYear() - age;
+  const month = at.getUTCMonth();
+  const day = at.getUTCDate();
+  const maxDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return year * 10000 + (month + 1) * 100 + Math.min(day, maxDay);
+}
+
+function computeAssuranceLevel(claims: Claim[], request: ProofRequest): number {
+  const index = request.requestedClaims.findIndex((item) => item.type === "KYC_LEVEL");
+  if (index < 0 || claims[index]?.type !== "KYC_LEVEL" || claims[index].value !== true) return 0;
+  return request.requestedClaims[index].minLevel ?? 1;
 }
 
 function validateClaimValues(claims: Claim[]): boolean {
   return claims.every((claim) => {
-    if (claim.type === "CONTINUITY") {
-      return typeof claim.value === "string" || typeof claim.value === "boolean";
-    }
-    return typeof claim.value === "boolean" || typeof claim.value === "number";
+    if (claim.type === "CONTINUITY") return typeof claim.value === "string" && claim.value.length >= 16;
+    return claim.value === true;
   });
 }
 
 function validateMinimalDisclosure(claims: Claim[]): boolean {
-  const forbiddenFields = [
-    "dateOfBirth", "dob", "birthdate", "age", "name", "firstName", "lastName",
-    "address", "street", "city", "state", "zip", "postalCode", "country",
-    "ssn", "socialSecurity", "taxId", "phone", "email", "kycLevel", "kyc",
-    "assuranceLevel", "tier", "level"
-  ];
-
   return claims.every((claim) => {
-    // AGE_OVER claims must be boolean only
-    if (claim.type === "AGE_OVER") {
-      if (typeof claim.value !== "boolean") {
-        return false;
-      }
-    }
-
-    // KYC_LEVEL claims must be boolean only
-    if (claim.type === "KYC_LEVEL") {
-      if (typeof claim.value !== "boolean") {
-        return false;
-      }
-    }
-
-    // CONTINUITY claims can be string (pairwise ID) or boolean
-    if (claim.type === "CONTINUITY") {
-      if (typeof claim.value !== "string" && typeof claim.value !== "boolean") {
-        return false;
-      }
-    }
-
-    // Check for forbidden evidence fields
-    if (claim.evidence && typeof claim.evidence === "object") {
-      for (const key of Object.keys(claim.evidence)) {
-        if (forbiddenFields.some((field) => key.toLowerCase().includes(field.toLowerCase()))) {
-          return false;
-        }
-      }
-    }
-
-    return true;
+    if (claim.type === "CONTINUITY") return !claim.evidence && !claim.issuer;
+    if (claim.value !== true) return false;
+    const attestation = claim.evidence?.commitmentAttestation;
+    if (!attestation) return false;
+    const allowed = new Set([
+      "version", "credentialId", "attribute", "commitment", "issuerDid",
+      "keyId", "issuedAt", "expiresAt", "signature"
+    ]);
+    return Object.keys(attestation).every((key) => allowed.has(key));
   });
 }
 
-function validateClaimsAgainstRequest(requested: ProofRequest["requestedClaims"], claims: Claim[]): boolean {
-  const requestedTypes = new Set(requested.map((item) => item.type));
-  for (const claim of claims) {
-    if (!requestedTypes.has(claim.type)) {
-      return false;
-    }
-  }
-  
-  for (const request of requested) {
-    const claim = claims.find((item) => item.type === request.type);
-    if (!claim) {
-      return false;
-    }
-    
-    // Validate based on operator (default: GE)
-    const operator = request.operator || "GE";
-    
-    switch (operator) {
-      case "GE": {
-        // For GE, value must be >= threshold (or true for ZK proofs)
-        const threshold = request.threshold ?? request.minLevel ?? 0;
-        if (typeof claim.value === "number" && claim.value < threshold) {
-          return false;
-        }
-        if (typeof claim.value === "boolean" && !claim.value) {
-          return false;
-        }
-        break;
-      }
-      
-      case "EQ": {
-        // For EQ with ZK proofs, the claim value being true means the proof was valid
-        // The actual value matching is handled in the ZK proof verification
-        if (typeof claim.value === "boolean") {
-          if (!claim.value) {
-            return false;
-          }
-        } else if (claim.value !== request.expectedValue) {
-          return false;
-        }
-        break;
-      }
-      
-      case "IN": {
-        // For IN (membership), the value must be true (proof verified)
-        if (typeof claim.value !== "boolean" || !claim.value) {
-          return false;
-        }
-        break;
-      }
-      
-      case "NOT_IN": {
-        // For NOT_IN, value must not be false (proof verified)
-        if (claim.value === false) {
-          return false;
-        }
-        break;
-      }
-      
-      case "STARTS_WITH": {
-        // For prefix matching with ZK proofs, claim.value true means proof was valid
-        if (typeof claim.value === "boolean") {
-          if (claim.value === false) {
-            return false;
-          }
-        } else if (typeof claim.value === "string") {
-          const prefix = String(request.expectedValue || "");
-          if (!claim.value.startsWith(prefix)) {
-            return false;
-          }
-        } else {
-          return false;
-        }
-        break;
-      }
-    }
-    
-    // Original checks for specific claim types (backward compatibility)
-    if (request.type === "AGE_OVER" && typeof request.threshold === "number") {
-      if (typeof claim.value === "number" && claim.value < request.threshold) {
-        return false;
-      }
-      if (typeof claim.value === "boolean" && !claim.value) {
-        return false;
-      }
-    }
-    
-    if (request.type === "KYC_LEVEL" && typeof request.minLevel === "number") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-    }
-    
-    if (request.type === "CONTINUITY" && typeof claim.value === "boolean" && !claim.value) {
-      return false;
-    }
-
-    // ======== PHASE 2 PREDICATES VALIDATION ========
-
-    // CONSENT_REQUIRED: Verify user has given required consent
-    if (request.type === "CONSENT_REQUIRED") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Additional validation for consent parameters if provided
-      if (request.minConsentVersion !== undefined && typeof request.minConsentVersion === "number") {
-        // Claim value true means proof verified, consent version >= minConsentVersion
-      }
-      if (request.consentDate !== undefined && typeof request.consentDate === "number") {
-        // Claim value true means proof verified, consent date is valid
-      }
-    }
-
-    // CREDENTIAL_CHAIN: Verify credential provenance and chain integrity
-    if (request.type === "CREDENTIAL_CHAIN") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Validation for credential chain parameters
-      if (request.chainLength !== undefined && typeof request.chainLength === "number") {
-        // Claim value true means chain length verified
-      }
-      if (request.requiredIssuers && Array.isArray(request.requiredIssuers)) {
-        // Claim value true means all required issuers verified in chain
-      }
-    }
-
-    // RISK_SCORE: Verify risk assessment is below threshold
-    if (request.type === "RISK_SCORE") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Claim value true means risk score <= maxRiskScore
-      if (request.maxRiskScore !== undefined && typeof request.maxRiskScore === "number") {
-        // Risk score verified to be within acceptable range
-      }
-      if (request.riskAssessmentDate !== undefined && typeof request.riskAssessmentDate === "number") {
-        // Assessment freshness verified
-      }
-    }
-
-    // DEVICE_COMPLIANCE: Verify device meets security requirements
-    if (request.type === "DEVICE_COMPLIANCE") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Claim value true means device compliance verified
-      if (request.osVersion) {
-        // OS version requirement verified
-      }
-      if (request.hasEncryption !== undefined) {
-        // Encryption requirement verified
-      }
-      if (request.hasMFA !== undefined) {
-        // MFA requirement verified
-      }
-      if (request.maxComplianceAge !== undefined && typeof request.maxComplianceAge === "number") {
-        // Compliance freshness verified
-      }
-    }
-
-    // TRANSACTION_LIMIT: Verify available transaction limit
-    if (request.type === "TRANSACTION_LIMIT") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Claim value true means transaction limit available
-      if (request.minAvailableLimit !== undefined && typeof request.minAvailableLimit === "number") {
-        // Available limit verified to be >= minAvailableLimit
-      }
-      if (request.limitType) {
-        // Limit type (DAILY, MONTHLY, CUMULATIVE) verified
-      }
-      if (request.limitResetDate !== undefined && typeof request.limitResetDate === "number") {
-        // Limit reset date verified
-      }
-    }
-
-    // REPUTATION_SCORE: Verify platform reputation meets minimum threshold
-    if (request.type === "REPUTATION_SCORE") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Claim value true means reputation score >= minReputationScore
-      if (request.minReputationScore !== undefined && typeof request.minReputationScore === "number") {
-        // Minimum reputation score verified
-      }
-      if (request.reputationSource) {
-        // Reputation source verified
-      }
-      if (request.maxScoreAge !== undefined && typeof request.maxScoreAge === "number") {
-        // Score freshness verified
-      }
-    }
-
-    // COMPLIANCE_STATUS: Verify regulatory compliance status
-    if (request.type === "COMPLIANCE_STATUS") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Claim value true means compliance status verified
-      if (request.jurisdiction) {
-        // Jurisdiction requirement verified
-      }
-      if (request.complianceLevel !== undefined && typeof request.complianceLevel === "number") {
-        // Compliance level verified
-      }
-      if (request.lastAuditDate !== undefined && typeof request.lastAuditDate === "number") {
-        // Recent audit requirement verified
-      }
-    }
-
-    // CREDENTIAL_METADATA: Verify metadata attributes match criteria
-    if (request.type === "CREDENTIAL_METADATA") {
-      if (typeof claim.value !== "boolean" || !claim.value) {
-        return false;
-      }
-      // Claim value true means metadata criteria verified
-      if (request.metadataKey) {
-        // Metadata key requirement verified
-      }
-      if (request.metadataValue !== undefined) {
-        // Metadata value requirement verified
-      }
-      const compareOp = request.comparisonOperator || "EQ";
-      // Comparison operator (EQ, GE, LE, GT, LT) verified
-      if (!["EQ", "GE", "LE", "GT", "LT"].includes(compareOp)) {
-        return false;
-      }
-    }
-  }
-
-  return true;
+function validateClaimsAgainstRequest(requested: RequestedClaim[], claims: Claim[]): boolean {
+  if (requested.length !== claims.length) return false;
+  return requested.every((req, index) => {
+    const claim = claims[index];
+    if (!claim || claim.type !== req.type) return false;
+    if (req.type === "CONTINUITY") return typeof claim.value === "string" && !claim.operator;
+    if (req.type === "AGE_OVER") return claim.value === true && claim.operator === "LE";
+    if (req.type === "KYC_LEVEL") return claim.value === true && claim.operator === "GE";
+    return false;
+  });
 }
 
 function hasForbiddenEvidence(claim: Claim, forbidden: string[]): boolean {
-  if (!claim.evidence || typeof claim.evidence !== "object") {
-    return false;
-  }
-  for (const key of Object.keys(claim.evidence)) {
-    if (forbidden.some((term) => key.toLowerCase().includes(term.toLowerCase()))) {
-      return true;
-    }
-  }
-  return false;
+  const text = JSON.stringify(claim.evidence ?? {}).toLowerCase();
+  return forbidden.some((term) => text.includes(`"${term.toLowerCase()}"`));
 }
 
 function isNotExpired(expiresAt: string): boolean {
   const expiry = Date.parse(expiresAt);
-  if (Number.isNaN(expiry)) {
-    return false;
-  }
-  return Date.now() <= expiry;
+  return Number.isFinite(expiry) && Date.now() <= expiry;
 }
 
-// Export utility functions for testing
+function unsignedAttestation(attestation: NumericCommitmentAttestation) {
+  const { signature: _signature, ...unsigned } = attestation;
+  return unsigned;
+}
+
+function validateAttestationShape(
+  attestation: NumericCommitmentAttestation,
+  expectedAttribute: "DOB_YYYYMMDD" | "KYC_LEVEL"
+): boolean {
+  if (attestation.version !== "SID-COMMITMENT-1" || attestation.attribute !== expectedAttribute) return false;
+  if (!attestation.credentialId || !attestation.commitment || !attestation.issuerDid || !attestation.keyId || !attestation.signature) return false;
+  const issued = Date.parse(attestation.issuedAt);
+  const expires = Date.parse(attestation.expiresAt);
+  return Number.isFinite(issued) && Number.isFinite(expires) && issued <= Date.now() + 30_000 && expires > Date.now() && expires > issued;
+}
+
 export {
   ensureRandomUUID,
   randomNonce,
   buildProofLink,
   findSigningKey,
+  cutoffYyyymmdd,
   computeAssuranceLevel,
   validateClaimValues,
   validateMinimalDisclosure,
@@ -381,11 +141,9 @@ export {
   isNotExpired
 };
 
-/** Main entry point for creating and verifying Shielded ID proofs. */
 export class ShieldedVerifier {
   private readonly origin: string;
   private readonly registryClient: RegistryClient;
-  // SECURITY FIX #4D: Performance monitoring metrics
   private readonly metrics = {
     verificationTimes: [] as number[],
     registryCallTimes: [] as number[],
@@ -393,29 +151,37 @@ export class ShieldedVerifier {
   };
 
   constructor(config: VerifierConfig) {
-    this.origin = config.origin;
-    const registryUrl = config.registryUrl ?? "";
+    this.origin = config.origin.replace(/\/$/, "");
     this.registryClient = new RegistryClient({
-      registryUrl: registryUrl || config.origin
+      registryUrl: (config.registryUrl ?? config.origin).replace(/\/$/, "")
     });
   }
 
-  /** Create a new proof request payload with nonce + timestamps. */
   createProofRequest(options: {
     requestedClaims: ProofRequest["requestedClaims"];
     policy: ProofRequest["policy"];
     callback: ProofRequest["callback"];
   }): ProofRequest {
-    const issuedAt = nowIso();
-    const requestId = ensureRandomUUID();
-    const nonce = randomNonce();
-    const expiresAt = addSeconds(issuedAt, options.policy.maxAgeSeconds);
+    if (!Number.isFinite(options.policy.maxAgeSeconds) || options.policy.maxAgeSeconds <= 0) {
+      throw new Error("INVALID_MAX_AGE_SECONDS");
+    }
+    for (const claim of options.requestedClaims) {
+      if (claim.type === "AGE_OVER" && claim.threshold !== undefined && (!Number.isInteger(claim.threshold) || claim.threshold < 0 || claim.threshold > 150)) {
+        throw new Error("INVALID_AGE_THRESHOLD");
+      }
+      if (claim.type === "KYC_LEVEL" && claim.minLevel !== undefined && (!Number.isInteger(claim.minLevel) || claim.minLevel < 0 || claim.minLevel > 5)) {
+        throw new Error("INVALID_KYC_THRESHOLD");
+      }
+      if (claim.type === "AGE_OVER" && claim.operator && claim.operator !== "LE") throw new Error("AGE_OVER_OPERATOR_MUST_BE_LE");
+      if (claim.type === "KYC_LEVEL" && claim.operator && claim.operator !== "GE") throw new Error("KYC_LEVEL_OPERATOR_MUST_BE_GE");
+    }
 
+    const issuedAt = nowIso();
     return {
-      requestId,
-      nonce,
+      requestId: ensureRandomUUID(),
+      nonce: randomNonce(),
       issuedAt,
-      expiresAt,
+      expiresAt: addSeconds(issuedAt, options.policy.maxAgeSeconds),
       verifierOrigin: this.origin,
       requestedClaims: options.requestedClaims,
       policy: options.policy,
@@ -423,703 +189,186 @@ export class ShieldedVerifier {
     };
   }
 
-  /** Generate a base64 PNG QR code data URL for a proof request. */
   async generateQR(request: ProofRequest): Promise<string> {
-    const link = buildProofLink(request);
-    return QRCode.toDataURL(link, { margin: 1, width: 320 });
+    return QRCode.toDataURL(buildProofLink(request), { margin: 1, width: 320 });
   }
 
-  /** Generate a deep link URI for mobile wallets. */
   generateDeepLink(request: ProofRequest): string {
     return buildProofLink(request);
   }
 
-  /** Verify a proof response against the request and registry. */
   async verifyProof(
     request: ProofRequest,
     proofResponse: ProofResponse,
     options: VerificationOptions = { checkRevocation: true }
   ): Promise<VerificationResult> {
-    // SECURITY FIX #4D: Track verification performance
-    const verificationStart = performance.now();
+    const start = performance.now();
     const verifiedAt = nowIso();
-
-    if (!validateTimestamp(request.issuedAt, request.expiresAt, request.policy.maxAgeSeconds)) {
-      // SECURITY FIX #5A: Record metric even on early exit
-      this.metrics.verificationTimes.push(performance.now() - verificationStart);
-      return { valid: false, reason: "REQUEST_EXPIRED", verifiedAt };
-    }
-
-    if (!validateNonce(request.nonce, proofResponse.nonce)) {
-      return { valid: false, reason: "NONCE_MISMATCH", verifiedAt };
-    }
-
-    if (request.requestId !== proofResponse.requestId) {
-      return { valid: false, reason: "REQUEST_ID_MISMATCH", verifiedAt };
-    }
-
-    // Lenient suite validation - accept most string values for flexibility
-    // Strict validation happens during proof verification
-    if (!proofResponse.suite || typeof proofResponse.suite !== "string" || proofResponse.suite.length === 0) {
-      return { valid: false, reason: "INVALID_SUITE", verifiedAt };
-    }
-
-    // Check if suite is supported (known suite types or contains known patterns)
-    const supportedSuitePatterns = [
-      "AGE_ZK",
-      "KYC_ZK",
-      "BULLETPROOFS",
-      "ECDSA",
-      "P256",
-      "RSA"
-    ];
-    const isSupportedSuite = supportedSuitePatterns.some(pattern => proofResponse.suite.includes(pattern));
-    if (!isSupportedSuite) {
-      return { valid: false, reason: "UNSUPPORTED_SUITE", verifiedAt };
-    }
-
-    // Validate ZK proof field consistency
-    const isZkSuite = proofResponse.suite && (proofResponse.suite.includes("BULLETPROOFS") || proofResponse.suite.includes("ZK"));
-    const hasZkFields = (proofResponse.zkProofs && Object.keys(proofResponse.zkProofs).length > 0) || 
-                        proofResponse.zkProof || 
-                        proofResponse.kycZkProof;
-
-    if (isZkSuite && !hasZkFields) {
-      return { valid: false, reason: "MISSING_ZK_PROOF", verifiedAt };
-    }
-    if (!isZkSuite && hasZkFields) {
-      return { valid: false, reason: "UNEXPECTED_ZK_PROOF", verifiedAt };
-    }
-
-    const walletStatus = await this.registryClient.getWalletStatus(proofResponse.walletId);
-    if (!walletStatus) {
-      return { valid: false, reason: "WALLET_NOT_FOUND", verifiedAt };
-    }
-
-    const walletKey = findSigningKey(walletStatus.keys);
-    if (!walletKey) {
-      return { valid: false, reason: "NO_ACTIVE_KEY", verifiedAt };
-    }
-
-    // Handle ZK proof verification
-    const hasZkProof = (proofResponse.zkProofs && Object.keys(proofResponse.zkProofs).length > 0) || 
-                       proofResponse.zkProof ||
-                       proofResponse.kycZkProof;
-    if (hasZkProof) {
-      // SECURITY FIX #5A: Track ZK verification timing
-      const zkStart = performance.now();
-      const zkValid = await this.verifyZkProof(request, proofResponse);
-      this.metrics.zkVerificationTimes.push(performance.now() - zkStart);
-      
-      if (!zkValid) {
-        this.metrics.verificationTimes.push(performance.now() - verificationStart);
-        return { valid: false, reason: "ZK_PROOF_INVALID", verifiedAt };
-      }
-    }
-
-    const responsePayload = { ...proofResponse } as Record<string, unknown>;
-    delete responsePayload.signature;
-    const message = canonicalPayload(responsePayload);
-    const signatureValid = await verifyECDSAP256(walletKey, message, proofResponse.signature);
-    if (!signatureValid) {
-      return { valid: false, reason: "INVALID_WALLET_SIGNATURE", verifiedAt };
-    }
-
-    for (const claim of proofResponse.claims) {
-      if (claim.issuer?.signature && claim.issuer?.did) {
-        const issuerKeys = await this.registryClient.fetchIssuerKeys(claim.issuer.did);
-        const issuerKey = claim.issuer.keyId
-          ? issuerKeys.keys.find((key) => key.kid === claim.issuer?.keyId)
-          : issuerKeys.keys[0];
-        if (!issuerKey) {
-          return { valid: false, reason: "ISSUER_KEY_NOT_FOUND", verifiedAt };
-        }
-        const issuerPayload = stableStringify({
-          type: claim.type,
-          value: claim.value,
-          expiresAt: claim.expiresAt ?? null,
-          evidence: claim.evidence ?? null,
-          issuer: { did: claim.issuer.did, keyId: claim.issuer.keyId ?? null }
-        });
-        const issuerValid = await verifyECDSAP256(issuerKey, issuerPayload, claim.issuer.signature);
-        if (!issuerValid) {
-          return { valid: false, reason: "INVALID_ISSUER_SIGNATURE", verifiedAt };
-        }
-      }
-    }
-
-    if (request.policy.requireStatusCheck || options.checkRevocation) {
-      const keyId = proofResponse.keyId;
-      if (!keyId) {
-        // SECURITY FIX #5A: Record metric on early exit
-        this.metrics.verificationTimes.push(performance.now() - verificationStart);
-        return { valid: false, reason: "KEY_ID_REQUIRED", verifiedAt };
-      }
-      // SECURITY FIX #4A: Use new dedicated key-specific endpoint
-      // SECURITY FIX #5A: Track registry call timing
-      const registryStart = performance.now();
-      const status = await this.registryClient.getKeyStatusViaNewEndpoint(keyId);
-      this.metrics.registryCallTimes.push(performance.now() - registryStart);
-      
-      if (status.revoked) {
-        this.metrics.verificationTimes.push(performance.now() - verificationStart);
-        return { valid: false, reason: "KEY_REVOKED", details: status as unknown as Record<string, unknown>, verifiedAt };
-      }
-      // SECURITY FIX #2: Enforce key expiration
-      if (status.expired) {
-        this.metrics.verificationTimes.push(performance.now() - verificationStart);
-        return { valid: false, reason: "KEY_EXPIRED", details: status as unknown as Record<string, unknown>, verifiedAt };
-      }
-    }
-
-    if (!validateClaimValues(proofResponse.claims)) {
-      return { valid: false, reason: "INVALID_CLAIM_VALUE", verifiedAt };
-    }
-
-    if (!validateMinimalDisclosure(proofResponse.claims)) {
-      return { valid: false, reason: "MINIMAL_DISCLOSURE_VIOLATION", verifiedAt };
-    }
-
-    if (!validateClaimsAgainstRequest(request.requestedClaims, proofResponse.claims)) {
-      return { valid: false, reason: "CLAIM_POLICY_MISMATCH", verifiedAt };
-    }
-
-    for (const claim of proofResponse.claims) {
-      if (claim.expiresAt) {
-        if (!isNotExpired(claim.expiresAt)) {
-          return { valid: false, reason: "CLAIM_EXPIRED", verifiedAt };
-        }
-      }
-      if (request.policy.forbidPII && hasForbiddenEvidence(claim, request.policy.forbidPII)) {
-        return { valid: false, reason: "PII_DETECTED", verifiedAt };
-      }
-    }
-
-    // SECURITY FIX #5A: Record verification timing on success
-    this.metrics.verificationTimes.push(performance.now() - verificationStart);
-    
-    return {
-      valid: true,
-      pairwiseSubjectId: proofResponse.pairwiseSubjectId,
-      assuranceLevel: computeAssuranceLevel(proofResponse.claims, request),
-      verifiedAt
+    const fail = (reason: string, details?: Record<string, unknown>): VerificationResult => {
+      this.metrics.verificationTimes.push(performance.now() - start);
+      return { valid: false, reason, details, verifiedAt };
     };
-  }
 
-  /** Check revocation status for a key via the registry. */
-  async checkRevocation(keyId: string) {
-    // SECURITY FIX #4A: Use new dedicated key-specific endpoint
-    return this.registryClient.getKeyStatusViaNewEndpoint(keyId);
-  }
-
-  /** Get performance metrics (SECURITY FIX #4D) */
-  getMetrics() {
-    const avgVerification = this.metrics.verificationTimes.length 
-      ? this.metrics.verificationTimes.reduce((a, b) => a + b, 0) / this.metrics.verificationTimes.length 
-      : 0;
-    const avgRegistry = this.metrics.registryCallTimes.length 
-      ? this.metrics.registryCallTimes.reduce((a, b) => a + b, 0) / this.metrics.registryCallTimes.length 
-      : 0;
-    const avgZkVerif = this.metrics.zkVerificationTimes.length 
-      ? this.metrics.zkVerificationTimes.reduce((a, b) => a + b, 0) / this.metrics.zkVerificationTimes.length 
-      : 0;
-
-    return {
-      verificationCount: this.metrics.verificationTimes.length,
-      avgVerificationMs: Math.round(avgVerification * 100) / 100,
-      registryCallCount: this.metrics.registryCallTimes.length,
-      avgRegistryCallMs: Math.round(avgRegistry * 100) / 100,
-      zkVerificationCount: this.metrics.zkVerificationTimes.length,
-      avgZkVerificationMs: Math.round(avgZkVerif * 100) / 100
-    };
-  }
-
-
-  /** Verify ZK proof for all 22 comprehensive predicates. */
-  private async verifyZkProof(request: ProofRequest, proofResponse: ProofResponse): Promise<boolean> {
     try {
-      // Support legacy single-proof formats for backward compatibility
-      if (proofResponse.zkProof && (proofResponse.suite === "AGE_ZK_BULLETPROOFS_V1")) {
-        return await this.verifyAgeZkProof(request, proofResponse);
-      }
-      
-      if (proofResponse.kycZkProof && (proofResponse.suite === "KYC_ZK_BULLETPROOFS_V1")) {
-        return await this.verifyKycZkProof(request, proofResponse);
+      if (request.verifierOrigin.replace(/\/$/, "") !== this.origin) return fail("VERIFIER_ORIGIN_MISMATCH");
+      if (!validateTimestamp(request.issuedAt, request.expiresAt, request.policy.maxAgeSeconds)) return fail("REQUEST_EXPIRED");
+      if (!validateNonce(request.nonce, proofResponse.nonce)) return fail("NONCE_MISMATCH");
+      if (request.requestId !== proofResponse.requestId) return fail("REQUEST_ID_MISMATCH");
+      if (!proofResponse.walletId || !proofResponse.keyId || !proofResponse.pairwiseSubjectId) return fail("MALFORMED_RESPONSE");
+      if (!validateClaimValues(proofResponse.claims)) return fail("INVALID_CLAIM_VALUE");
+      if (!validateMinimalDisclosure(proofResponse.claims)) return fail("MINIMAL_DISCLOSURE_VIOLATION");
+      if (!validateClaimsAgainstRequest(request.requestedClaims, proofResponse.claims)) return fail("CLAIM_POLICY_MISMATCH");
+
+      const requiresZk = request.requestedClaims.some((claim) => claim.type === "AGE_OVER" || claim.type === "KYC_LEVEL");
+      if (requiresZk && proofResponse.suite !== "BULLETPROOFS_RISTRETTO_BOUND_V2") return fail("UNSUPPORTED_SUITE");
+      if (!requiresZk && proofResponse.suite !== "ECDSA_P256_SHA256_1.0.0") return fail("UNSUPPORTED_SUITE");
+      if (requiresZk && (!proofResponse.zkProofs || Object.keys(proofResponse.zkProofs).length === 0)) return fail("MISSING_ZK_PROOF");
+      if (!requiresZk && proofResponse.zkProofs) return fail("UNEXPECTED_ZK_PROOF");
+
+      const registryStart = performance.now();
+      const walletStatus = await this.registryClient.getWalletStatus(proofResponse.walletId);
+      this.metrics.registryCallTimes.push(performance.now() - registryStart);
+      if (!walletStatus) return fail("WALLET_NOT_FOUND");
+      if (walletStatus.status !== "ACTIVE") return fail("WALLET_NOT_ACTIVE");
+      const walletKey = findSigningKey(walletStatus.keys, proofResponse.keyId);
+      if (!walletKey) return fail("NO_ACTIVE_MATCHING_KEY");
+
+      // Authenticate the wallet before spending CPU on ZK verification.
+      const responsePayload = { ...proofResponse } as Record<string, unknown>;
+      delete responsePayload.signature;
+      if (!await verifyECDSAP256(walletKey, canonicalPayload(responsePayload), proofResponse.signature)) {
+        return fail("INVALID_WALLET_SIGNATURE");
       }
 
-      // Support new multi-proof format
-      if (proofResponse.zkProofs && Object.keys(proofResponse.zkProofs).length > 0) {
-        const firstProof = Object.values(proofResponse.zkProofs)[0];
-        if (firstProof.claimType === "AGE_OVER" || firstProof.claimType === "AGE_RANGE") {
-          return await this.verifyAgeZkProof(request, proofResponse);
-        }
-        
-        if (firstProof.claimType === "KYC_LEVEL" || firstProof.claimType === "KYC_VERIFIED") {
-          return await this.verifyKycZkProof(request, proofResponse);
-        }
+      if (request.policy.requireStatusCheck || options.checkRevocation) {
+        const statusStart = performance.now();
+        const status = await this.registryClient.getKeyStatusViaNewEndpoint(proofResponse.keyId);
+        this.metrics.registryCallTimes.push(performance.now() - statusStart);
+        if (status.revoked) return fail("KEY_REVOKED");
+        if (status.expired) return fail("KEY_EXPIRED");
       }
 
-      // Multi-proof format verification
-      if (proofResponse.zkProofs && proofResponse.suite === "BULLETPROOFS_RISTRETTO_V1") {
-        for (const [idx, zkProof] of Object.entries(proofResponse.zkProofs)) {
-          const claimIdx = parseInt(idx);
-          const claim = proofResponse.claims[claimIdx];
-          
-          if (zkProof && claim) {
-            const isValid = await this.verifyComprehensiveZkProof(
-              request,
-              claim,
-              zkProof,
-              claimIdx
-            );
-            
-            if (!isValid) {
-              console.log(`ZK proof verification failed for claim ${claimIdx} (${claim.type})`);
-              return false;
-            }
-          }
-        }
-        return true;
+      if (requiresZk) {
+        const zkStart = performance.now();
+        const valid = await this.verifyZkClaims(request, proofResponse);
+        this.metrics.zkVerificationTimes.push(performance.now() - zkStart);
+        if (!valid) return fail("ZK_OR_ISSUER_PROOF_INVALID");
       }
 
-      return false;
+      for (const claim of proofResponse.claims) {
+        if (claim.expiresAt && !isNotExpired(claim.expiresAt)) return fail("CLAIM_EXPIRED");
+        if (request.policy.forbidPII && hasForbiddenEvidence(claim, request.policy.forbidPII)) return fail("PII_DETECTED");
+      }
+
+      this.metrics.verificationTimes.push(performance.now() - start);
+      return {
+        valid: true,
+        pairwiseSubjectId: proofResponse.pairwiseSubjectId,
+        assuranceLevel: computeAssuranceLevel(proofResponse.claims, request),
+        verifiedAt
+      };
     } catch (err) {
-      console.error("ZK proof verification failed:", err);
-      return false;
+      return fail("VERIFICATION_ERROR", { error: err instanceof Error ? err.message : "unknown" });
     }
   }
 
-  /** Verify comprehensive ZK proof for any predicate type */
-  private async verifyComprehensiveZkProof(
+  private async verifyZkClaims(request: ProofRequest, response: ProofResponse): Promise<boolean> {
+    const proofs = response.zkProofs ?? {};
+    const expectedProofCount = request.requestedClaims.filter((claim) => claim.type !== "CONTINUITY").length;
+    if (Object.keys(proofs).length !== expectedProofCount) return false;
+    const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt}`;
+
+    for (let index = 0; index < request.requestedClaims.length; index += 1) {
+      const requested = request.requestedClaims[index];
+      const claim = response.claims[index];
+      if (requested.type === "CONTINUITY") {
+        if (proofs[index]) return false;
+        if (claim.value !== response.pairwiseSubjectId) return false;
+        continue;
+      }
+
+      const zkProof = proofs[index];
+      if (!zkProof || zkProof.claimType !== requested.type) return false;
+      if (!await this.verifyIssuerBoundProof(requested, request, claim, zkProof, context)) return false;
+    }
+    return true;
+  }
+
+  private async verifyIssuerBoundProof(
+    requested: RequestedClaim,
     request: ProofRequest,
     claim: Claim,
-    zkProof: any,
-    claimIndex: number
-  ): Promise<boolean> {
-    try {
-      const commitment = base64UrlDecode(zkProof.commitment);
-      const proof = base64UrlDecode(zkProof.bulletproof);
-      const publicInputs = base64UrlDecode(zkProof.publicInputs);
-      const context = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
-      
-      // Basic length validation
-      if (commitment.length !== 32 || proof.length < 100) {
-        return false;
-      }
-
-      const publicInputsStr = new TextDecoder().decode(publicInputs);
-      
-      // Route to appropriate verifier based on claim type and operator
-      const operator = zkProof.operator || "GE";
-      
-      switch (zkProof.claimType) {
-        // ======== AGE PROOFS ========
-        case "AGE_OVER": {
-          const threshold = request.requestedClaims.find(c => c.type === "AGE_OVER")?.threshold || 18;
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(threshold), context);
-        }
-        
-        case "AGE_RANGE": {
-          const req = request.requestedClaims.find(c => c.type === "AGE_RANGE");
-          const minAge = req?.minValue || 18;
-          const maxAge = req?.maxValue || 65;
-          // Verify both bounds are satisfied
-          return await this.verifyAgeRangeProof(commitment, proof, publicInputs, minAge, maxAge, context);
-        }
-        
-        case "AGE_EXACT": {
-          const expectedAge = request.requestedClaims.find(c => c.type === "AGE_EXACT")?.expectedValue || 21;
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(expectedAge), context);
-        }
-        
-        case "BORN_AFTER": {
-          const minYear = request.requestedClaims.find(c => c.type === "BORN_AFTER")?.expectedValue || 1960;
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(minYear), context);
-        }
-        
-        // ======== LOCATION PROOFS ========
-        case "COUNTRY": {
-          const expectedCountry = request.requestedClaims.find(c => c.type === "COUNTRY")?.expectedCountry || "US";
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, expectedCountry, context);
-        }
-        
-        case "EU_RESIDENT": {
-          return await this.verifyMembershipProof(
-            commitment,
-            proof,
-            publicInputs,
-            "AT,BE,BG,HR,CY,CZ,DK,EE,FI,FR,DE,GR,HU,IE,IT,LV,LT,LU,MT,NL,PL,PT,RO,SK,SI,ES,SE",
-            context
-          );
-        }
-        
-        case "STATE_OR_PROVINCE": {
-          const expectedState = request.requestedClaims.find(c => c.type === "STATE_OR_PROVINCE")?.expectedState || "CA";
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, expectedState, context);
-        }
-        
-        case "POSTAL_CODE_PREFIX": {
-          const prefix = String(request.requestedClaims.find(c => c.type === "POSTAL_CODE_PREFIX")?.expectedValue || "90");
-          return await this.verifyStringPrefixProof(commitment, proof, publicInputs, prefix, context);
-        }
-        
-        case "REGION": {
-          const expectedRegion = String(request.requestedClaims.find(c => c.type === "REGION")?.expectedValue || "US-CA");
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, expectedRegion, context);
-        }
-        
-        // ======== KYC PROOFS ========
-        case "KYC_LEVEL": {
-          const minLevel = request.requestedClaims.find(c => c.type === "KYC_LEVEL")?.minLevel || 1;
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(minLevel), context);
-        }
-        
-        case "KYC_VERIFIED": {
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, "verified", context);
-        }
-        
-        case "AML_CLEAR": {
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, "clear", context);
-        }
-        
-        case "SANCTIONS_CLEAR": {
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, "clear", context);
-        }
-        
-        case "DOCUMENT_TYPE": {
-          const expectedType = request.requestedClaims.find(c => c.type === "DOCUMENT_TYPE")?.expectedValue || "passport";
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, String(expectedType), context);
-        }
-        
-        // ======== DRIVING LICENSE PROOFS ========
-        case "LICENSE_CLASS": {
-          const minClass = request.requestedClaims.find(c => c.type === "LICENSE_CLASS")?.threshold || 2;
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(minClass), context);
-        }
-        
-        case "VEHICLE_CATEGORY": {
-          const expectedCategory = request.requestedClaims.find(c => c.type === "VEHICLE_CATEGORY")?.expectedValue || "car";
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, String(expectedCategory), context);
-        }
-        
-        case "ENDORSEMENT": {
-          const required = request.requestedClaims.find(c => c.type === "ENDORSEMENT")?.requiredEndorsement || "towing";
-          // Verify membership in endorsements list
-          return await this.verifyMembershipProof(commitment, proof, publicInputs, required, context);
-        }
-        
-        case "RESTRICTION": {
-          const forbidden = request.requestedClaims.find(c => c.type === "RESTRICTION")?.forbiddenRestriction || "corrective_lenses";
-          // Verify NOT membership in restrictions
-          return await this.verifyNotMembershipProof(commitment, proof, publicInputs, forbidden, context);
-        }
-        
-        case "LICENSE_VALID": {
-          // Expiry date > current time
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(Math.floor(Date.now() / 1000)), context);
-        }
-        
-        // ======== DOCUMENT & CREDENTIAL PROOFS ========
-        case "DOCUMENT_VALID": {
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(Math.floor(Date.now() / 1000)), context);
-        }
-        
-        case "DOCUMENT_TYPE_MATCH": {
-          const expectedType = request.requestedClaims.find(c => c.type === "DOCUMENT_TYPE_MATCH")?.expectedValue || "passport";
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, String(expectedType), context);
-        }
-        
-        case "ISSUER_COUNTRY": {
-          const expectedIssuer = request.requestedClaims.find(c => c.type === "ISSUER_COUNTRY")?.issuerCountry || "US";
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, expectedIssuer, context);
-        }
-        
-        case "DOCUMENT_AGE": {
-          const minAge = request.requestedClaims.find(c => c.type === "DOCUMENT_AGE")?.minDocumentAge || 0;
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(minAge), context);
-        }
-        
-        case "CREDENTIAL_VALID": {
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(Math.floor(Date.now() / 1000)), context);
-        }
-        
-        case "CREDENTIAL_ACTIVE": {
-          return await this.verifyStringEqualityProof(commitment, proof, publicInputs, "active", context);
-        }
-        
-        case "CREDENTIAL_LEVEL": {
-          const minLevel = request.requestedClaims.find(c => c.type === "CREDENTIAL_LEVEL")?.minLevel || 1;
-          return await verify_ge_components(commitment, proof, publicInputs, BigInt(minLevel), context);
-        }
-        
-        default:
-          console.error("Unknown claim type for ZK verification:", zkProof.claimType);
-          return false;
-      }
-    } catch (err) {
-      console.error("Comprehensive ZK proof verification failed:", err);
-      return false;
-    }
-  }
-
-  // Helper methods for common proof verification patterns
-  private async verifyAgeRangeProof(
-    commitment: Uint8Array,
-    proof: Uint8Array,
-    publicInputs: Uint8Array,
-    minAge: number,
-    maxAge: number,
+    zkProof: ZkProofEntry,
     context: string
   ): Promise<boolean> {
-    // For age range, we need to verify both bounds
-    // This would require calling verify_age_range_components (to be exported from WASM)
-    // For now, use a simplified check
-    const publicInputsStr = new TextDecoder().decode(publicInputs);
-    const parts = publicInputsStr.split('|');
-    return parts[0] === String(minAge) && parts[1] === String(maxAge);
-  }
+    const attestation = claim.evidence?.commitmentAttestation;
+    if (!attestation || !claim.issuer) return false;
+    const expectedAttribute = requested.type === "AGE_OVER" ? "DOB_YYYYMMDD" : "KYC_LEVEL";
+    if (!validateAttestationShape(attestation, expectedAttribute)) return false;
+    if (
+      claim.issuer.did !== attestation.issuerDid ||
+      claim.issuer.keyId !== attestation.keyId ||
+      claim.issuer.signature !== attestation.signature ||
+      claim.expiresAt !== attestation.expiresAt
+    ) return false;
 
-  private async verifyStringEqualityProof(
-    commitment: Uint8Array,
-    proof: Uint8Array,
-    publicInputs: Uint8Array,
-    expectedValue: string,
-    context: string
-  ): Promise<boolean> {
-    // Basic check: commitment and proof lengths are reasonable
-    if (commitment.length !== 32 || proof.length < 700) {
-      return false;
-    }
-    
-    const publicInputsStr = new TextDecoder().decode(publicInputs);
-    const parts = publicInputsStr.split('|');
-    if (parts.length < 2) {
-      return false;
-    }
-    
-    // Verify expected value matches
-    return parts[0] === expectedValue || parts[1] === expectedValue;
-  }
-
-  private async verifyMembershipProof(
-    commitment: Uint8Array,
-    proof: Uint8Array,
-    publicInputs: Uint8Array,
-    list: string,
-    context: string
-  ): Promise<boolean> {
-    const publicInputsStr = new TextDecoder().decode(publicInputs);
-    const parts = publicInputsStr.split('|');
-    if (parts.length < 2) {
-      return false;
-    }
-    
-    const value = parts[0];
-    const items = list.split(',').map(s => s.trim());
-    return items.includes(value);
-  }
-
-  private async verifyNotMembershipProof(
-    commitment: Uint8Array,
-    proof: Uint8Array,
-    publicInputs: Uint8Array,
-    forbidden: string,
-    context: string
-  ): Promise<boolean> {
-    const publicInputsStr = new TextDecoder().decode(publicInputs);
-    const parts = publicInputsStr.split('|');
-    if (parts.length < 2) {
-      return false;
-    }
-    
-    const value = parts[0];
-    return value !== forbidden;
-  }
-
-  private async verifyStringPrefixProof(
-    commitment: Uint8Array,
-    proof: Uint8Array,
-    publicInputs: Uint8Array,
-    prefix: string,
-    context: string
-  ): Promise<boolean> {
-    const publicInputsStr = new TextDecoder().decode(publicInputs);
-    const parts = publicInputsStr.split('|');
-    if (parts.length < 2) {
-      return false;
-    }
-    
-    const fullString = parts[0];
-    return fullString.startsWith(prefix);
-  }
-
-  /** Verify age ZK proof (supports both legacy and new formats) */
-  private async verifyAgeZkProof(
-    request: ProofRequest,
-    proofResponse: ProofResponse
-  ): Promise<boolean> {
-    // Support legacy single-proof format
-    if (proofResponse.zkProof) {
-      try {
-        const commitment = base64UrlDecode(proofResponse.zkProof.commitment);
-        const proof = base64UrlDecode(proofResponse.zkProof.bulletproof);
-        const publicInputs = base64UrlDecode(proofResponse.zkProof.publicInputs);
-        
-        if (commitment.length !== 32 || proof.length < 100 || publicInputs.length < 10) {
-          return false;
-        }
-
-        const publicInputsStr = new TextDecoder().decode(publicInputs);
-        const parts = publicInputsStr.split('|');
-        if (parts.length < 3) {
-          return false;
-        }
-        
-        // Verify context binding (nonce, origin, expiry)
-        const context = parts.slice(2).join('|');
-        const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
-        
-        if (context !== expectedContext) {
-          return false;
-        }
-
-        // Actually verify the cryptographic proof using Rust verification
-        const ageThreshold = request.requestedClaims
-          .find(c => c.type === "AGE_OVER")
-          ?.threshold ?? 18;
-
-        return await verify_ge_components(
-          commitment,
-          proof,
-          publicInputs,
-          BigInt(ageThreshold),
-          context
-        );
-      } catch {
-        return false;
-      }
-    }
-
-    // Support new multi-proof format
-    if (!proofResponse.zkProofs || Object.keys(proofResponse.zkProofs).length === 0) {
-      return false;
-    }
-
-    const ageThreshold = request.requestedClaims
-      .find(c => c.type === "AGE_OVER")
-      ?.threshold ?? 18;
+    const issuerKey = await this.registryClient.getIssuerKey(attestation.issuerDid, attestation.keyId);
+    if (issuerKey.status !== "ACTIVE") return false;
+    if (!await verifyECDSAP256(
+      issuerKey.publicKey,
+      stableStringify(unsignedAttestation(attestation)),
+      attestation.signature
+    )) return false;
 
     let commitment: Uint8Array;
     let proof: Uint8Array;
     let publicInputs: Uint8Array;
-    
     try {
-      const zkProof = Object.values(proofResponse.zkProofs)[0];
       commitment = base64UrlDecode(zkProof.commitment);
       proof = base64UrlDecode(zkProof.bulletproof);
       publicInputs = base64UrlDecode(zkProof.publicInputs);
-    } catch (decodeError) {
+    } catch {
       return false;
+    }
+    if (commitment.length !== 32 || proof.length < 100 || publicInputs.length < 20) return false;
+
+    const sourceCommitment = await source_commitment_from_public_inputs(publicInputs);
+    if (base64UrlEncode(sourceCommitment) !== attestation.commitment) return false;
+
+    if (requested.type === "AGE_OVER") {
+      if (zkProof.operator !== "LE" || claim.operator !== "LE") return false;
+      const threshold = requested.threshold ?? 18;
+      const cutoff = cutoffYyyymmdd(threshold, new Date(request.issuedAt));
+      return verify_le_components(commitment, proof, publicInputs, cutoff, context);
     }
 
-    if (commitment.length !== 32 || proof.length < 100 || publicInputs.length < 10) {
-      return false;
+    if (requested.type === "KYC_LEVEL") {
+      if (zkProof.operator !== "GE" || claim.operator !== "GE") return false;
+      const minLevel = requested.minLevel ?? 1;
+      return verify_ge_components(commitment, proof, publicInputs, minLevel, context);
     }
 
-    const publicInputsStr = new TextDecoder().decode(publicInputs);
-    const parts = publicInputsStr.split('|');
-    if (parts.length < 3) {
-      return false;
-    }
-    
-    const context = parts.slice(2).join('|');
-    const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
-    
-    if (context !== expectedContext) {
-      return false;
-    }
-
-    return await verify_ge_components(
-      commitment,
-      proof,
-      publicInputs,
-      BigInt(ageThreshold),
-      context
-    );
+    return false;
   }
 
-  /** Verify KYC ZK proof (supports both legacy and new formats) */
-  private async verifyKycZkProof(
-    request: ProofRequest,
-    proofResponse: ProofResponse
-  ): Promise<boolean> {
-    // Support legacy single-proof format
-    if (proofResponse.kycZkProof) {
-      try {
-        const commitment = base64UrlDecode(proofResponse.kycZkProof.commitment);
-        const proof = base64UrlDecode(proofResponse.kycZkProof.bulletproof);
-        const publicInputs = base64UrlDecode(proofResponse.kycZkProof.publicInputs);
-        
-        // Extract and validate context from public inputs
-        const publicInputsStr = new TextDecoder().decode(publicInputs);
-        const parts = publicInputsStr.split('|');
-        if (parts.length < 3) {
-          return false;
-        }
-        
-        const context = parts.slice(2).join('|');
-        const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
-        
-        if (context !== expectedContext) {
-          return false;
-        }
-
-        return await verify_ge_components(
-          commitment,
-          proof,
-          publicInputs,
-          BigInt(2),
-          context
-        );
-      } catch {
-        return false;
-      }
-    }
-
-    // Support new multi-proof format
-    if (!proofResponse.zkProofs || Object.keys(proofResponse.zkProofs).length === 0) {
-      return false;
-    }
-
-    const zkProof = Object.values(proofResponse.zkProofs)[0];
-    const commitment = base64UrlDecode(zkProof.commitment);
-    const proof = base64UrlDecode(zkProof.bulletproof);
-    const publicInputs = base64UrlDecode(zkProof.publicInputs);
-    
-    // Extract and validate context from public inputs
-    const publicInputsStr = new TextDecoder().decode(publicInputs);
-    const parts = publicInputsStr.split('|');
-    if (parts.length < 3) {
-      return false;
-    }
-    
-    const context = parts.slice(2).join('|');
-    const expectedContext = `${request.verifierOrigin}|${request.nonce}|${request.expiresAt || ""}`;
-    
-    if (context !== expectedContext) {
-      return false;
-    }
-
-    return await verify_ge_components(
-      commitment,
-      proof,
-      publicInputs,
-      BigInt(2),
-      context
-    );
+  async checkRevocation(keyId: string) {
+    return this.registryClient.getKeyStatusViaNewEndpoint(keyId);
   }
 
-  // Test-only method to reset state
+  getMetrics() {
+    const average = (values: number[]) => values.length
+      ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100
+      : 0;
+    return {
+      verificationCount: this.metrics.verificationTimes.length,
+      avgVerificationMs: average(this.metrics.verificationTimes),
+      registryCallCount: this.metrics.registryCallTimes.length,
+      avgRegistryCallMs: average(this.metrics.registryCallTimes),
+      zkVerificationCount: this.metrics.zkVerificationTimes.length,
+      avgZkVerificationMs: average(this.metrics.zkVerificationTimes)
+    };
+  }
+
   resetForTesting(): void {
     this.registryClient.resetCircuitBreaker();
   }
