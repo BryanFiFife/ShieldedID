@@ -80,6 +80,14 @@ export async function registerStatusRoutes(app: FastifyInstance) {
               },
               checkedAt: { type: "string" }
             }
+          },
+          404: {
+            type: "object",
+            required: ["ok", "error"],
+            properties: {
+              ok: { type: "boolean" },
+              error: { type: "string" }
+            }
           }
         }
       },
@@ -183,6 +191,14 @@ export async function registerStatusRoutes(app: FastifyInstance) {
               expiresAt: { type: "string" },
               createdAt: { type: "string" },
               checkedAt: { type: "string" }
+            }
+          },
+          404: {
+            type: "object",
+            required: ["ok", "error"],
+            properties: {
+              ok: { type: "boolean" },
+              error: { type: "string" }
             }
           }
         }

@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@shielded-id/age-zk": "workspace:*",
-    "axios": "^1.7.4",
+    "axios": "^1.18.0",
     "qrcode": "^1.5.3"
   },
   "devDependencies": {
